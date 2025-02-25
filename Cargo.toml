@@ -1,0 +1,17 @@
+[package]
+name = "miniutils"
+version = "0.1.5"
+authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
+description = "Minimal utilities for Rust"
+readme = "README.md"
+repository = "https://github.com/Ukko-Ylijumala/miniutils-rs"
+license = "MIT OR Apache-2.0"
+categories = ["development-tools"]
+keywords = ["utilities"]
+publish = false
+edition = "2021"
+
+[dependencies]
+lazy_static = "1.4.0"
+parking_lot = "0.12"
+sysinfo = "0.30.13"

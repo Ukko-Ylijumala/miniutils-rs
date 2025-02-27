@@ -1,9 +1,11 @@
 // Copyright (c) 2024-2025 Mikko Tanner. All rights reserved.
 
+mod filesystem;
 mod humanbytes;
 mod procinfo;
 mod strtobytes;
 
+pub use filesystem::check_readable_dir;
 pub use humanbytes::HumanBytes;
 pub use procinfo::ProcessInfo;
 use std::{

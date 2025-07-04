@@ -3,7 +3,7 @@
 use crate::HumanBytes as HuB;
 use parking_lot::RwLock;
 use std::time::{Duration, Instant};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 /// ProcessInfoInner contains the actual (mutable) process information.
 struct ProcessInfoInner {
@@ -18,6 +18,7 @@ pub struct ProcessInfo {
     pub pid: usize,
     p: Pid,
     inner: RwLock<ProcessInfoInner>,
+    kind: ProcessRefreshKind,
 }
 
 impl ProcessInfo {
@@ -25,10 +26,15 @@ impl ProcessInfo {
         // Get the current process ID
         let pid: usize = std::process::id() as usize;
         let s_p: Pid = Pid::from(pid);
+        let kind: ProcessRefreshKind = ProcessRefreshKind::nothing()
+            .with_memory()
+            .with_cpu()
+            .without_tasks();
 
         // Create a System object to query system information
         let mut sys: System = System::new();
-        sys.refresh_process(s_p);
+        // Do the initial refresh of the process info already here.
+        refresh_processes(&mut sys, &[s_p], &kind);
         Self {
             pid,
             p: s_p,
@@ -38,6 +44,7 @@ impl ProcessInfo {
                 sys,
                 upd: Instant::now(),
             }),
+            kind,
         }
     }
 
@@ -47,7 +54,7 @@ impl ProcessInfo {
             return;
         }
         let mut i = self.inner.write();
-        i.sys.refresh_process(self.p);
+        refresh_processes(&mut i.sys, &[self.p], &self.kind);
         i.mem = i.sys.process(self.p).map_or_else(|| 0, |p| p.memory());
         i.cpu = i.sys.process(self.p).map_or_else(|| 0.0, |p| p.cpu_usage());
         i.upd = Instant::now();
@@ -89,4 +96,9 @@ impl ProcessInfo {
             self.cpu_str()
         );
     }
+}
+
+/// Refresh the [sysinfo::System] object for given processes only.
+fn refresh_processes(sys: &mut System, pids: &[Pid], kind: &ProcessRefreshKind) {
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, *kind);
 }

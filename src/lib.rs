@@ -2,11 +2,13 @@
 
 mod filesystem;
 mod humanbytes;
+mod minisysinfo;
 mod procinfo;
 mod strtobytes;
 
 pub use filesystem::check_readable_dir;
 pub use humanbytes::HumanBytes;
+pub use minisysinfo::SysInfo;
 pub use procinfo::ProcessInfo;
 use std::{
     fmt::{Debug, Display},

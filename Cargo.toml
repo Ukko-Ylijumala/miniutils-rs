@@ -23,6 +23,7 @@ features = ["derive"]
 
 [dependencies.timesince]
 git = "https://github.com/Ukko-Ylijumala/timesince-rs"
+version = "0.3.1"
 
 [[bin]]
 name = "sysinfo-printer"

@@ -27,7 +27,7 @@ pub struct SysInfoDynamic {
     pub mem: MemoryStats,
     pub cpu: f32,
     pub load: (f64, f64, f64),
-    pub when: f64,
+    pub when: TimeSinceEpoch,
 }
 
 /// Memory information for the system.
@@ -108,7 +108,7 @@ impl SysInfo {
                 mem: MemoryStats::collect(&sys),
                 cpu: sys.global_cpu_usage(),
                 load: get_load_avg(),
-                when: TimeSinceEpoch::now(),
+                when: TimeSinceEpoch::new(),
             }),
             sys: RwLock::new(sys),
             data: SysInfoStatic::collect(),
@@ -117,13 +117,13 @@ impl SysInfo {
 
     /// Refresh the inner system info struct (at most, once every [MIN_INTERVAL] ms)
     fn refresh(&self) {
-        if TimeSinceEpoch::new_from(self.inner.read().when).since() < MIN_INTERVAL {
+        if self.inner.read().when.since() < MIN_INTERVAL {
             return;
         }
         let mut sys = self.sys.write();
         let mut i = self.inner.write();
         sys.refresh_specifics(self.kind);
-        i.when = TimeSinceEpoch::now();
+        i.when = TimeSinceEpoch::new();
         i.mem.update(&sys);
         i.cpu = sys.global_cpu_usage();
         i.load = get_load_avg();
@@ -208,7 +208,7 @@ impl SysInfo {
         let used = mem - avail;
         let cpu = i.cpu;
         let (l1, l5, l15) = i.load;
-        let ts = TimeSinceEpoch::new_from(i.when);
+        let ts = i.when.clone();
         drop(i); // release the read lock before printing
         eprintln!(
             "{} | mem: {} used: {} avail: {} CPU: {:.2}% load: {:.2} {:.2} {:.2}",

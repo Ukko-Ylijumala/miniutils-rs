@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-use timesince::TimeSinceEpoch;
+use timesince::{SecondsSinceEpoch, TimeSinceEpoch};
 
 const MIN_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -17,7 +17,7 @@ pub struct SysInfoStatic {
     pub os_ver: String,
     pub kernel: String,
     pub distro: String,
-    pub boot_time: u64,
+    pub boot_time: SecondsSinceEpoch,
     pub num_cores: usize,
 }
 
@@ -26,7 +26,7 @@ pub struct SysInfoStatic {
 pub struct SysInfoDynamic {
     pub mem: MemoryStats,
     pub cpu: f32,
-    pub load: (f64, f64, f64),
+    pub load: (f32, f32, f32),
     pub when: TimeSinceEpoch,
 }
 
@@ -54,7 +54,7 @@ impl SysInfoStatic {
     /// Collect static system information from [sysinfo::System].
     fn collect() -> Self {
         Self {
-            boot_time: System::boot_time(),
+            boot_time: System::boot_time().into(),
             num_cores: System::physical_core_count().unwrap_or(1),
             hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
             os_name: System::name().unwrap_or_else(|| "unknown".to_string()),
@@ -171,7 +171,7 @@ impl SysInfo {
     }
 
     /// Load averages for the last 1, 5, and 15 minutes.
-    pub fn load(&self) -> (f64, f64, f64) {
+    pub fn load(&self) -> (f32, f32, f32) {
         self.refresh();
         self.inner.read().load
     }
@@ -233,7 +233,7 @@ fn num2human(num: u64) -> String {
 }
 
 /// Get the system load averages.
-fn get_load_avg() -> (f64, f64, f64) {
+fn get_load_avg() -> (f32, f32, f32) {
     let load = System::load_average();
-    (load.one, load.five, load.fifteen)
+    (load.one as f32, load.five as f32, load.fifteen as f32)
 }

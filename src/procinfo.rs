@@ -61,9 +61,11 @@ impl ProcessInfo {
 
     /// Refresh the inner process info struct (at most, once every 200 ms)
     fn refresh(&self) {
-        let inner = self.inner.read();
-        if inner.upd.elapsed() < inner.ival {
-            return;
+        {
+            let i = self.inner.read();
+            if i.upd.elapsed() < i.ival {
+                return;
+            }
         }
         let mut i = self.inner.write();
         refresh_processes(&mut i.sys, &[self.p], &self.kind);

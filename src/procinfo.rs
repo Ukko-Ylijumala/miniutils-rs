@@ -5,12 +5,16 @@ use parking_lot::RwLock;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
+const MIN_INTERVAL_MS: u64 = 200;
+const MAX_INTERVAL_MS: u64 = 5000;
+
 /// ProcessInfoInner contains the actual (mutable) process information.
 struct ProcessInfoInner {
     sys: System,
     mem: u64,
     cpu: f32,
     upd: Instant,
+    ival: Duration,
 }
 
 /// Information about the current process.
@@ -43,14 +47,22 @@ impl ProcessInfo {
                 cpu: sys.process(s_p).map_or_else(|| 0.0, |p| p.cpu_usage()),
                 sys,
                 upd: Instant::now(),
+                ival: Duration::from_millis(MIN_INTERVAL_MS),
             }),
             kind,
         }
     }
 
+    /// Build with minimum interval between process info updates.
+    pub fn with_min_interval(self, ival: u64) -> Self {
+        self.set_interval(ival);
+        self
+    }
+
     /// Refresh the inner process info struct (at most, once every 200 ms)
     fn refresh(&self) {
-        if self.inner.read().upd.elapsed() < Duration::from_millis(200) {
+        let inner = self.inner.read();
+        if inner.upd.elapsed() < inner.ival {
             return;
         }
         let mut i = self.inner.write();
@@ -58,6 +70,15 @@ impl ProcessInfo {
         i.mem = i.sys.process(self.p).map_or_else(|| 0, |p| p.memory());
         i.cpu = i.sys.process(self.p).map_or_else(|| 0.0, |p| p.cpu_usage());
         i.upd = Instant::now();
+    }
+
+    /// Set minimum interval between process info updates in milliseconds. Accepts
+    /// values between 200 and 5000 ms. Lower bound is enforced since polling at
+    /// higher frequencies is counterproductive and could also produce inaccurate
+    /// values due to how [sysinfo::System] does its own polling.
+    pub fn set_interval(&self, min_interval: u64) {
+        let min_interval: u64 = min_interval.clamp(MIN_INTERVAL_MS, MAX_INTERVAL_MS);
+        self.inner.write().ival = Duration::from_millis(min_interval);
     }
 
     /// Memory usage in bytes.

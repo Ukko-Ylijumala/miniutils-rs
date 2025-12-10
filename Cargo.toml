@@ -1,6 +1,6 @@
 [package]
 name = "miniutils"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Minimal utilities for Rust"
 readme = "README.md"
@@ -13,12 +13,12 @@ edition = "2021"
 
 [dependencies]
 lazy_static = "1.4.0"
-parking_lot = "0.12.4"
-sysinfo = "0.35.2"
-tracing = "0.1"
+parking_lot = "0.12.5"
+sysinfo = "0.37"
+tracing = "0.1.43"
 
 [dependencies.serde]
-version = "1.0"
+version = "1.0.228"
 features = ["derive"]
 
 [dependencies.timesince]

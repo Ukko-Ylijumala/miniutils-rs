@@ -11,11 +11,15 @@ pub use humanbytes::HumanBytes;
 pub use minisysinfo::SysInfo;
 pub use procinfo::ProcessInfo;
 use std::{
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Write},
     path::{Component, Path, PathBuf},
     thread::available_parallelism,
 };
 pub use strtobytes::{str_to_bytes, str_to_bytes_64};
+
+static PLACEHOLDER: &str = "{}";
+static PH_BEG: char = '{';
+static PH_END: char = '}';
 
 /* ######################################################################### */
 
@@ -45,6 +49,81 @@ impl<T: Display> ToDisplay for T {
     fn to_display(&self) -> String {
         format!("{self}")
     }
+}
+
+/* ######################################################################### */
+
+/// Template string injector. Replaces `{}` placeholders with provided args in order.
+#[inline]
+pub fn inject<I>(template: &str, args: I) -> String
+where
+    I: IntoIterator,
+    I::Item: Display,
+{
+    let mut result = String::with_capacity(template.len());
+    let mut args_iter = args.into_iter();
+    let mut in_brace = false;
+
+    for c in template.chars() {
+        if in_brace {
+            if c == PH_END {
+                if let Some(arg) = args_iter.next() {
+                    let _ = write!(result, "{}", arg);
+                } else {
+                    result.push_str(PLACEHOLDER);
+                }
+                in_brace = false;
+            } else {
+                result.push(PH_BEG);
+                result.push(c);
+                in_brace = false;
+            }
+        } else if c == PH_BEG {
+            in_brace = true;
+        } else {
+            result.push(c);
+        }
+    }
+
+    // consume extra args if there are any (either by design or by accident)
+    for arg in args_iter {
+        let _ = write!(result, "{}", arg);
+    }
+
+    result
+}
+
+/**
+Template string injector macro. Replaces `{}` placeholders with provided args
+in order. Each arg must implement [Display].
+
+### Pros:
+- generic template strings can be used
+- any number of arguments
+- simpler than the alternatives
+### Cons:
+- runtime function call instead of compile-time formatting (`#[inline]`, but still)
+- `dyn` dispatch for Display trait objects
+- YOU are responsible for ensuring the number of `{}` matches arguments
+  (nothing would blow up, but the output would likely be incorrect)
+- limited functionality compared to [format!] macro
+- no arg formatting possible in the placeholder string (f.ex. `{:.2}`,
+  but the args obviously can be pre-formatted)
+
+Rationale: using template strings in Rust is mighty complicated and you can't
+actually even use templated (generic) strings with `format!` directly.
+This macro provides a simple way to do that, at the cost of having to use
+a function call during runtime instead of compile-time formatting, and the
+loss of compile-time checks and optimizations.
+*/
+#[macro_export]
+macro_rules! templater {
+    ($template:expr) => {
+        $template.to_string()
+    };
+    ($template:expr, $($arg:expr),+ $(,)?) => {
+        inject($template, &[$(&$arg as &dyn Display),+])
+    };
 }
 
 /* ######################################################################### */

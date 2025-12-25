@@ -1,6 +1,6 @@
 [package]
 name = "miniutils"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Minimal utilities for Rust"
 readme = "README.md"
@@ -23,7 +23,7 @@ features = ["derive"]
 
 [dependencies.timesince]
 git = "https://github.com/Ukko-Ylijumala/timesince-rs"
-version = "0.3.1"
+version = "0.3.2"
 
 [[bin]]
 name = "sysinfo-printer"

@@ -1,6 +1,6 @@
 [package]
 name = "miniutils"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Minimal utilities for Rust"
 readme = "README.md"
@@ -17,6 +17,7 @@ parking_lot = "0.12.5"
 sysinfo = "0.37"
 tracing = "0.1.43"
 regex = "1.12"
+ipnet = "2.11"
 
 [dependencies.serde]
 version = "1.0.228"

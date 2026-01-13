@@ -2,6 +2,7 @@
 
 mod filesystem;
 mod humanbytes;
+pub mod iptools;
 mod minisysinfo;
 mod procinfo;
 mod strtobytes;

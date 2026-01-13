@@ -5,6 +5,7 @@ mod humanbytes;
 mod minisysinfo;
 mod procinfo;
 mod strtobytes;
+mod tabulator;
 
 pub use filesystem::check_readable_dir;
 pub use humanbytes::HumanBytes;
@@ -16,6 +17,7 @@ use std::{
     thread::available_parallelism,
 };
 pub use strtobytes::{str_to_bytes, str_to_bytes_64};
+pub use tabulator::{simple_tabulate, tabulate_with_missing};
 
 static PLACEHOLDER: &str = "{}";
 static PH_BEG: char = '{';

@@ -1,6 +1,6 @@
 [package]
 name = "miniutils"
-version = "0.2.6"
+version = "0.2.7"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Minimal utilities for Rust"
 readme = "README.md"
@@ -11,22 +11,38 @@ keywords = ["utilities"]
 publish = false
 edition = "2021"
 
+[features]
+# Default: everything on (matches the pre-feature-gate crate surface).
+# Consumers wanting a lean build: default-features = false, features = ["..."]
+default = ["filesystem", "iptools", "sysinfo", "tabulator"]
+# filesystem helpers (pulls tracing for error logging)
+filesystem = ["dep:tracing"]
+# IP/CIDR tooling: parsing, ranges, collapsing/imploding (pulls ipnet)
+iptools = ["dep:ipnet"]
+# system/process info: SysInfo, ProcessInfo and the sysinfo-printer binary
+sysinfo = ["dep:sysinfo", "dep:parking_lot", "dep:serde", "dep:timesince"]
+# table formatting (pulls regex)
+tabulator = ["dep:regex"]
+
 [dependencies]
 lazy_static = "1.4.0"
-parking_lot = "0.12.5"
-sysinfo = "0.37"
-tracing = "0.1.43"
-regex = "1.12"
-ipnet = "2.11"
+parking_lot = { version = "0.12.5", optional = true }
+sysinfo = { version = "0.37", optional = true }
+tracing = { version = "0.1.43", optional = true }
+regex = { version = "1.12", optional = true }
+ipnet = { version = "2.11", optional = true }
 
 [dependencies.serde]
 version = "1.0.228"
 features = ["derive"]
+optional = true
 
 [dependencies.timesince]
 git = "https://github.com/Ukko-Ylijumala/timesince-rs"
 version = "0.3.2"
+optional = true
 
 [[bin]]
 name = "sysinfo-printer"
 path = "src/sysinfo_printer.rs"
+required-features = ["sysinfo"]

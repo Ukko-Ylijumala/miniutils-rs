@@ -1,16 +1,24 @@
 // Copyright (c) 2024-2025 Mikko Tanner. All rights reserved.
 
+#[cfg(feature = "filesystem")]
 mod filesystem;
 mod humanbytes;
+#[cfg(feature = "iptools")]
 pub mod iptools;
+#[cfg(feature = "sysinfo")]
 mod minisysinfo;
+#[cfg(feature = "sysinfo")]
 mod procinfo;
 mod strtobytes;
+#[cfg(feature = "tabulator")]
 mod tabulator;
 
+#[cfg(feature = "filesystem")]
 pub use filesystem::check_readable_dir;
 pub use humanbytes::HumanBytes;
+#[cfg(feature = "sysinfo")]
 pub use minisysinfo::SysInfo;
+#[cfg(feature = "sysinfo")]
 pub use procinfo::ProcessInfo;
 use std::{
     fmt::{Debug, Display, Write},
@@ -18,6 +26,7 @@ use std::{
     thread::available_parallelism,
 };
 pub use strtobytes::{str_to_bytes, str_to_bytes_64};
+#[cfg(feature = "tabulator")]
 pub use tabulator::{simple_tabulate, tabulate_with_missing};
 
 static PLACEHOLDER: &str = "{}";

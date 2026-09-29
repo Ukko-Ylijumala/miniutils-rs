@@ -1,6 +1,6 @@
 [package]
 name = "miniutils"
-version = "0.2.7"
+version = "0.2.8"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Minimal utilities for Rust"
 readme = "README.md"

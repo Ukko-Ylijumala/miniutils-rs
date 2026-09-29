@@ -1,6 +1,10 @@
-// Copyright (c) 2024-2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2024-2026 Mikko Tanner. All rights reserved.
 
-use std::{fs::metadata, io, path::Path};
+use std::{
+    fs::{metadata, read_dir, Metadata},
+    io,
+    path::{Path, PathBuf},
+};
 
 use tracing::error;
 
@@ -15,28 +19,117 @@ A canonicalized (absolute, resolved) path to the directory.
 
 ## Errors
 This function will return an error if the given path does not exist,
-is not a directory or if it fails to get metadata for the directory.
+is not a directory, cannot be listed (f.ex. lacking permissions), if it
+fails to get metadata for the directory, or if the canonicalized path
+is not valid UTF-8.
 */
-pub fn check_readable_dir(path: &String) -> Result<String, io::Error> {
-    let path: &Path = Path::new(path);
+pub fn check_readable_dir<P: AsRef<Path>>(path: P) -> Result<String, io::Error> {
+    let path: &Path = path.as_ref();
 
-    if !path.exists() {
-        let errmsg: String = format!("Directory {} does not exist", path.display());
-        error!(errmsg);
-        return Err(io::Error::new(io::ErrorKind::NotFound, errmsg));
-    }
-
-    if let Ok(metadata) = metadata(path) {
-        if !metadata.is_dir() {
-            let errmsg: String = format!("Not a directory: {}", path.display());
-            error!(errmsg);
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, errmsg));
+    /*
+    A single metadata() call instead of exists() + metadata(): exists() maps
+    every error to `false`, so f.ex. EACCES on a parent directory used to be
+    reported as "does not exist".
+    */
+    let md: Metadata = match metadata(path) {
+        Ok(md) => md,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let errmsg: String = format!("Directory {} does not exist", path.display());
+            return Err(log_err(io::ErrorKind::NotFound, errmsg));
         }
-    } else {
-        let errmsg: String = format!("Failed to get metadata for: {}", path.display());
-        error!(errmsg);
-        return Err(io::Error::new(io::ErrorKind::Other, errmsg));
+        Err(e) => {
+            let errmsg: String = format!("Failed to get metadata for: {}: {e}", path.display());
+            return Err(log_err(e.kind(), errmsg));
+        }
     };
 
-    Ok(path.canonicalize()?.to_str().unwrap().to_string())
+    if !md.is_dir() {
+        let errmsg: String = format!("Not a directory: {}", path.display());
+        return Err(log_err(io::ErrorKind::InvalidInput, errmsg));
+    }
+
+    // metadata says nothing about permissions, so actually try to list the directory
+    if let Err(e) = read_dir(path) {
+        let errmsg: String = format!("Directory {} is not readable: {e}", path.display());
+        return Err(log_err(e.kind(), errmsg));
+    }
+
+    let canonical: PathBuf = path.canonicalize()?;
+    match canonical.to_str() {
+        Some(s) => Ok(s.to_string()),
+        None => {
+            let errmsg: String = format!("Path is not valid UTF-8: {}", canonical.display());
+            Err(log_err(io::ErrorKind::InvalidData, errmsg))
+        }
+    }
+}
+
+/// Log an error message and wrap it into an [io::Error] of the given kind.
+fn log_err(kind: io::ErrorKind, errmsg: String) -> io::Error {
+    error!("{errmsg}");
+    io::Error::new(kind, errmsg)
+}
+
+/* ######################################################################### */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::{env, fs, process};
+
+    /// Fresh scratch dir under the system temp dir, unique per test and process.
+    fn scratch(name: &str) -> PathBuf {
+        let dir: PathBuf = env::temp_dir().join(format!("miniutils-fs-{}-{name}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_readable_dir_ok() {
+        let dir: PathBuf = scratch("ok");
+        let res: String = check_readable_dir(&dir).unwrap();
+        assert_eq!(PathBuf::from(res), dir.canonicalize().unwrap());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_readable_dir_missing() {
+        let dir: PathBuf = scratch("missing");
+        let err: io::Error = check_readable_dir(dir.join("nope")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_readable_dir_not_a_dir() {
+        let dir: PathBuf = scratch("file");
+        let file: PathBuf = dir.join("file");
+        fs::write(&file, b"").unwrap();
+        let err: io::Error = check_readable_dir(&file).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_readable_dir_no_permission() {
+        let dir: PathBuf = scratch("noperm");
+        let locked: PathBuf = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // root ignores permission bits, so there is nothing to test there
+        if read_dir(&locked).is_err() {
+            let err: io::Error = check_readable_dir(&locked).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+            let err: io::Error = check_readable_dir(locked.join("child")).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        }
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

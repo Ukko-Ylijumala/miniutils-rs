@@ -187,6 +187,7 @@ pub struct CidrIterator {
     fam: IpFam,
     current: u128,
     end: u128,
+    done: bool,
 }
 
 impl CidrIterator {
@@ -203,6 +204,7 @@ impl CidrIterator {
             fam: range.fam,
             current: range.beg,
             end: range.end,
+            done: false,
         }
     }
 }
@@ -211,12 +213,22 @@ impl Iterator for CidrIterator {
     type Item = IpAddr;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current > self.end {
+        if self.done {
             return None;
         }
 
         let ip: IpAddr = int_to_ip(self.fam, self.current);
-        self.current = self.current.saturating_add(1);
+
+        /*
+        Stop on reaching 'end' rather than stepping past it: when 'end' is the
+        top of the v6 space (ffff:...:ffff), 'current + 1' does not exist and
+        a saturating step would yield the last address forever.
+        */
+        if self.current == self.end {
+            self.done = true;
+        } else {
+            self.current += 1;
+        }
 
         Some(ip)
     }
@@ -325,6 +337,11 @@ mod tests {
     const TEST_V4: &str = "192.168.1.0/30";
     const TEST_V6: &str = "::/126";
     const TEST_LEN: &str = "10.0.0.0/8";
+    // CIDRs containing ffff:...:ffff, and how many addresses each holds
+    const TEST_TOP_V6: [(&str, usize); 2] = [
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128", 1),
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc/126", 4),
+    ];
 
     #[test]
     fn test_cidr_parse_v4() {
@@ -377,7 +394,16 @@ mod tests {
             IpAddr::V6(Ipv6Addr::from(2u128)),
             IpAddr::V6(Ipv6Addr::from(3u128)),
         ];
-        assert_eq!(ips, expected); 
+        assert_eq!(ips, expected);
+    }
+
+    #[test]
+    fn test_cidr_iter_top_v6() {
+        for (input, count) in TEST_TOP_V6 {
+            let cidr: Cidr = input.parse().unwrap();
+            // bounded with take(): this iterator used to never terminate here
+            assert_eq!(cidr.iter().take(count + 5).count(), count, "Failed: '{input}'");
+        }
     }
 
     #[test]

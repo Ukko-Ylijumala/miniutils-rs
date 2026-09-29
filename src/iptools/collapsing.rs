@@ -279,7 +279,16 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
         // pow is <= 128; for v6, pow==128 would imply prefix==0, but we guard above
         let block_size_pow: u32 = (bits - prefix) as u32;
         let block_size: u128 = 1u128 << block_size_pow;
-        start = start.saturating_add(block_size);
+
+        /*
+        Overflow means this block reached the top of the v6 space (ffff:...:ffff),
+        so we're done. Saturating here would pin 'start' at u128::MAX, keep
+        'start <= end' true forever and emit /128s until memory runs out.
+        */
+        match start.checked_add(block_size) {
+            Some(next) => start = next,
+            None => break,
+        }
     }
 
     out
@@ -384,6 +393,20 @@ mod tests {
 
     const TST_E_V6: [&str; 4] = ["2001:db8::0", "2001:db8::3", "2001:db8::5", "2001:db8::7"];
     const RES_E_V6: &str = "2001:db8::/125";
+
+    // top of the v6 space: block arithmetic used to overflow and loop forever
+    const TST_F_V6: [(&str, &str); 3] = [
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128"),
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/127", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/127"),
+        ("ffff::/16", "ffff::/16"),
+    ];
+    const TST_F_RNG: (&str, &str) = ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff3", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff");
+    const RES_F_RNG: [&str; 3] = [
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff3/128",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff4/126",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff8/125",
+    ];
+    const TST_FULL: [&str; 2] = ["0.0.0.0/0", "::/0"];
 
     #[test]
     fn test_merges_adjacent_v4() {
@@ -522,5 +545,25 @@ mod tests {
         eprintln!("{:?}", out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_E_V6);
+    }
+
+    #[test]
+    fn test_top_of_v6_space() {
+        for (input, expected) in TST_F_V6 {
+            let out: Vec<String> = collapse_strings(&[input], 0).iter().map(|c| c.to_string()).collect();
+            assert_eq!(out, vec![expected], "Failed: '{input}'");
+        }
+
+        let rng: IpRange = IpRange::new(TST_F_RNG.0.parse().unwrap(), TST_F_RNG.1.parse().unwrap()).unwrap();
+        let out: Vec<String> = collapse_ranges(&[rng]).unwrap().iter().map(|c| c.to_string()).collect();
+        assert_eq!(out, RES_F_RNG);
+    }
+
+    #[test]
+    fn test_full_address_space() {
+        for input in TST_FULL {
+            let out: Vec<String> = collapse_strings(&[input], 0).iter().map(|c| c.to_string()).collect();
+            assert_eq!(out, vec![input], "Failed: '{input}'");
+        }
     }
 }

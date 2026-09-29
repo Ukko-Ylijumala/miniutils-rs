@@ -85,6 +85,9 @@ where
                     result.push_str(PLACEHOLDER);
                 }
                 in_brace = false;
+            } else if c == PH_BEG {
+                // "{{}": the first brace is literal, the second may still open a placeholder
+                result.push(PH_BEG);
             } else {
                 result.push(PH_BEG);
                 result.push(c);
@@ -95,6 +98,11 @@ where
         } else {
             result.push(c);
         }
+    }
+
+    // a lone '{' at the very end of the template is literal text
+    if in_brace {
+        result.push(PH_BEG);
     }
 
     // consume extra args if there are any (either by design or by accident)
@@ -127,6 +135,14 @@ actually even use templated (generic) strings with `format!` directly.
 This macro provides a simple way to do that, at the cost of having to use
 a function call during runtime instead of compile-time formatting, and the
 loss of compile-time checks and optimizations.
+
+### Example
+```
+use miniutils::templater;
+
+let tpl: &str = "{} + {} = {}";
+assert_eq!(templater!(tpl, 1, 2, 3), "1 + 2 = 3");
+```
 */
 #[macro_export]
 macro_rules! templater {
@@ -134,7 +150,7 @@ macro_rules! templater {
         $template.to_string()
     };
     ($template:expr, $($arg:expr),+ $(,)?) => {
-        inject($template, &[$(&$arg as &dyn Display),+])
+        $crate::inject($template, &[$(&$arg as &dyn ::core::fmt::Display),+])
     };
 }
 
@@ -167,7 +183,8 @@ pub fn is_suspicious_char(c: char) -> bool {
 /**
 More strict version of `is_suspicious_char()`.
 
-This function flags the following characters:
+This function flags everything [is_suspicious_char] does, and in addition
+the following characters:
 ```ignore
     '*' | '?' |     // Wildcards
     '"' | '\'' |    // Quote characters
@@ -185,7 +202,7 @@ This function flags the following characters:
 #[rustfmt::skip]
 #[inline]
 pub fn is_suspicious_strict(c: char) -> bool {
-    matches!(
+    is_suspicious_char(c) || matches!(
         c,
         '*' | '?' | '"' | '\'' |
         '<' | '>' | '|' |
@@ -328,5 +345,37 @@ mod tests {
             let expected: &str = tests[i + 1];
             assert_eq!(normalize_path(input, false), PathBuf::from(expected), "Failed: '{input}'");
         }
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn test_normalize_path_strict() {
+        let tests: Vec<&str> = vec![
+            // base set must be removed in strict mode too
+            "/a/b\0/c",                 "/a/b/c",
+            "/a/b\\/c\n",               "/a/b/c",
+            // strict-only characters
+            "/a/$(rm -rf)/b",           "/a/rm -rf/b",
+            "a/`x`/../b;ls",            "a/bls",
+            "/a/*/?/[1]/{2}",           "/a/1/2",
+        ];
+
+        for i in (0..tests.len()).step_by(2) {
+            let input: &str = tests[i];
+            let expected: &str = tests[i + 1];
+            assert_eq!(normalize_path(input, true), PathBuf::from(expected), "Failed: '{input}'");
+        }
+    }
+
+    #[test]
+    fn test_inject() {
+        assert_eq!(inject("a {} b {}", [1, 2]), "a 1 b 2");
+        assert_eq!(inject("{} {}", [1]), "1 {}");
+        assert_eq!(inject("a {} b", [1, 2, 3]), "a 1 b23");
+        assert_eq!(inject("{x}", [1]), "{x}1");
+        // trailing '{' must survive
+        assert_eq!(inject("abc{", Vec::<i32>::new()), "abc{");
+        // the second brace of "{{}" still opens a placeholder
+        assert_eq!(inject("{{}}", [42]), "{42}");
     }
 }

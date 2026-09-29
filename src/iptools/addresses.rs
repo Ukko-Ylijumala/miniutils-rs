@@ -32,7 +32,9 @@ pub fn parse_ip_or_range(arg: impl AsRef<str>) -> Result<Vec<IpAddr>, AddressErr
             IpNet::V4(_) => IPV4_BITS,
             IpNet::V6(_) => IPV6_BITS,
         };
-        let num_addrs: u128 = 1u128 << (bits - network.prefix_len());
+        // v6 /0 would be 2^128, which doesn't fit: saturate like Cidr::len()
+        let host_bits: u32 = (bits - network.prefix_len()) as u32;
+        let num_addrs: u128 = 1u128.checked_shl(host_bits).unwrap_or(u128::MAX);
         if num_addrs > MAX_RANGE_SIZE as u128 {
             return Err(AddressError::RangeTooLarge(num_addrs));
         }
@@ -196,6 +198,8 @@ mod tests {
     const BAD_RANGE_V6: &str = "::5-1";
     const BIG_RANGE_V6: &str = "::1-::ffff";
     const TOOBIG_V6: &str = "::1-::ffff:ffff"; // 4B addresses
+    const ALL_V6: &str = "::/0"; // 2^128 addresses, doesn't fit in u128
+    const HALF_V6: &str = "::/1";
 
     #[test]
     fn test_parse_single_ip() {
@@ -267,5 +271,11 @@ mod tests {
     fn test_toobig_v6() {
         let result: Result<Vec<IpAddr>, AddressError> = parse_ip_or_range(TOOBIG_V6);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_huge_v6_cidr() {
+        assert_eq!(parse_ip_or_range(ALL_V6), Err(AddressError::RangeTooLarge(u128::MAX)));
+        assert_eq!(parse_ip_or_range(HALF_V6), Err(AddressError::RangeTooLarge(1u128 << 127)));
     }
 }

@@ -3,7 +3,7 @@
 use crate::HumanBytes as HuB;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use timesince::{SecondsSinceEpoch, TimeSinceEpoch};
 
@@ -28,6 +28,13 @@ pub struct SysInfoDynamic {
     pub cpu: f32,
     pub load: (f32, f32, f32),
     pub when: TimeSinceEpoch,
+    /**
+    Monotonic time of the last refresh, used for rate limiting. `when` is
+    wall-clock time and can step backwards (NTP, VM resume), which made
+    `when.since()` panic on the negative duration.
+    */
+    #[serde(skip, default = "Instant::now")]
+    upd: Instant,
 }
 
 /// Memory information for the system.
@@ -109,6 +116,7 @@ impl SysInfo {
                 cpu: sys.global_cpu_usage(),
                 load: get_load_avg(),
                 when: TimeSinceEpoch::new(),
+                upd: Instant::now(),
             }),
             sys: RwLock::new(sys),
             data: SysInfoStatic::collect(),
@@ -117,12 +125,21 @@ impl SysInfo {
 
     /// Refresh the inner system info struct (at most, once every [MIN_INTERVAL] ms)
     fn refresh(&self) {
-        if self.inner.read().when.since() < MIN_INTERVAL {
+        if self.inner.read().upd.elapsed() < MIN_INTERVAL {
             return;
         }
         let mut sys = self.sys.write();
         let mut i = self.inner.write();
+        /*
+        Re-check under the write lock: another thread may have refreshed while
+        we waited. A back-to-back second refresh would compute CPU usage over
+        a near-zero window.
+        */
+        if i.upd.elapsed() < MIN_INTERVAL {
+            return;
+        }
         sys.refresh_specifics(self.kind);
+        i.upd = Instant::now();
         i.when = TimeSinceEpoch::new();
         i.mem.update(&sys);
         i.cpu = sys.global_cpu_usage();

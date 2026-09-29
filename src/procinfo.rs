@@ -68,6 +68,10 @@ impl ProcessInfo {
             }
         }
         let mut i = self.inner.write();
+        // re-check: another thread may have refreshed while we waited for the lock
+        if i.upd.elapsed() < i.ival {
+            return;
+        }
         refresh_processes(&mut i.sys, &[self.p], &self.kind);
         i.mem = i.sys.process(self.p).map_or_else(|| 0, |p| p.memory());
         i.cpu = i.sys.process(self.p).map_or_else(|| 0.0, |p| p.cpu_usage());

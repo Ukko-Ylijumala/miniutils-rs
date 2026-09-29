@@ -93,12 +93,7 @@ Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
 This does *not* enumerate IPs and hence scales to very large ranges.
 */
 pub fn collapse_ranges(input: &[IpRange]) -> Result<Vec<Cidr>, AddressError> {
-    let mut ranges: Vec<Range> = Vec::with_capacity(input.len());
-
-    for r in input.iter().copied() {
-        let rr: Range = iprange_to_range(r)?;
-        ranges.push(rr);
-    }
+    let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
 
     // 1) Sort ranges
     ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
@@ -120,12 +115,7 @@ Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
 Fuzzily merges nearby ranges separated by <= `max_gap` IPs (over-approximation).
 */
 pub fn collapse_ranges_fuzzy(input: &[IpRange], max_gap: u128) -> Result<Vec<Cidr>, AddressError> {
-    let mut ranges: Vec<Range> = Vec::with_capacity(input.len());
-
-    for r in input.iter().copied() {
-        let rr: Range = iprange_to_range(r)?;
-        ranges.push(rr);
-    }
+    let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
 
     // 1) Sort ranges
     ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
@@ -292,33 +282,6 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
     }
 
     out
-}
-
-/// Convert an [IpRange] to a [Range].
-fn iprange_to_range(r: IpRange) -> Result<Range, AddressError> {
-    match (r.beg, r.end) {
-        (IpAddr::V4(a), IpAddr::V4(b)) => {
-            let aa: u32 = u32::from_be_bytes(a.octets());
-            let bb: u32 = u32::from_be_bytes(b.octets());
-            let (beg, end) = if aa <= bb { (aa, bb) } else { (bb, aa) };
-            Ok(Range {
-                fam: IpFam::V4,
-                beg: beg as u128,
-                end: end as u128,
-            })
-        }
-        (IpAddr::V6(a), IpAddr::V6(b)) => {
-            let aa: u128 = u128::from_be_bytes(a.octets());
-            let bb: u128 = u128::from_be_bytes(b.octets());
-            let (beg, end) = if aa <= bb { (aa, bb) } else { (bb, aa) };
-            Ok(Range {
-                fam: IpFam::V6,
-                beg,
-                end,
-            })
-        }
-        (beg, end) => Err(AddressError::Mismatch(beg, end)),
-    }
 }
 
 /* ---------------------------------- */

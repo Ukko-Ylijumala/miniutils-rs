@@ -9,7 +9,8 @@ use super::{
 };
 use std::{
     fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    iter::FusedIterator,
+    net::IpAddr,
     str::FromStr,
 };
 
@@ -109,17 +110,25 @@ impl Cidr {
     NOTE: For large CIDRs (e.g., /0), this can produce a very large number of
     addresses, especially for IPv6. Use with caution. You have been warned.
     */
-    pub fn iter(&self) -> CidrIterator {
-        CidrIterator::new(*self)
+    pub fn iter(&self) -> IpIterator {
+        let range: Range = cidr_to_range(*self);
+
+        debug_assert_eq!(
+            range.len(),
+            self.len(),
+            "Cidr::iter: length mismatch between 'Cidr' and 'Range' structs"
+        );
+
+        IpIterator::new(range)
     }
 }
 
 impl IntoIterator for Cidr {
     type Item = IpAddr;
-    type IntoIter = CidrIterator;
+    type IntoIter = IpIterator;
 
     fn into_iter(self) -> Self::IntoIter {
-        CidrIterator::new(self)
+        self.iter()
     }
 }
 
@@ -130,14 +139,14 @@ impl fmt::Display for Cidr {
 }
 
 impl FromStr for Cidr {
-    type Err = String;
+    type Err = AddressError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.contains(SLASH) {
             let addr: IpAddr = s
                 .trim()
                 .parse::<IpAddr>()
-                .map_err(|_| format!("{ERR_INV_ADDR}: '{s}'"))?;
+                .map_err(|_| AddressError::InvalidAddr(s.into()))?;
             return Ok(Cidr {
                 addr,
                 prefix: match addr {
@@ -149,7 +158,7 @@ impl FromStr for Cidr {
 
         let parts: Vec<&str> = s.split(SLASH).collect();
         if parts.len() != 2 {
-            return Err(format!("{ERR_CIDR_FMT}: '{s}'"));
+            return Err(AddressError::InvalidCidrFmt(s.into()));
         }
 
         let addr: &str = parts[0].trim();
@@ -157,21 +166,21 @@ impl FromStr for Cidr {
 
         let addr: IpAddr = addr
             .parse::<IpAddr>()
-            .map_err(|_| format!("{ERR_CIDR_INV_ADDR}: '{addr}'"))?;
+            .map_err(|_| AddressError::InvalidCidrAddr(addr.into()))?;
 
         let prefix: u8 = prefix
             .parse::<u8>()
-            .map_err(|_| format!("{ERR_CIDR_INV_PRE}: '{prefix}'"))?;
+            .map_err(|_| AddressError::InvalidCidrPrefix(prefix.into()))?;
 
         match addr {
             IpAddr::V4(_) => {
                 if prefix > IPV4_BITS {
-                    return Err(format!("{ERR_CIDR_INV_V4}: '{prefix}'"));
+                    return Err(AddressError::InvalidV4Prefix(prefix));
                 }
             }
             IpAddr::V6(_) => {
                 if prefix > IPV6_BITS {
-                    return Err(format!("{ERR_CIDR_INV_V6}: '{prefix}'"));
+                    return Err(AddressError::InvalidV6Prefix(prefix));
                 }
             }
         }
@@ -180,36 +189,130 @@ impl FromStr for Cidr {
     }
 }
 
+/* -------------------------------------------------------------------------- */
+
+/**
+Inclusive range of IP addresses (endpoints are included).
+
+Construct with [IpRange::new], which guarantees that both ends are of the
+same IP family and `beg <= end`. The fields are not public so that this
+invariant cannot be bypassed.
+*/
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct IpRange {
+    pub(crate) beg: IpAddr,
+    pub(crate) end: IpAddr,
+}
+
+impl IpRange {
+    /// Create a new [IpRange]. Ensures that IP families match and order is correct.
+    pub fn new(beg: IpAddr, end: IpAddr) -> Result<Self, AddressError> {
+        // Validate same IP version
+        match (beg, end) {
+            (IpAddr::V4(_), IpAddr::V6(_)) | (IpAddr::V6(_), IpAddr::V4(_)) => {
+                return Err(AddressError::Mismatch(beg, end));
+            }
+            _ => {}
+        }
+
+        // Validate order
+        if beg > end {
+            return Err(AddressError::RangeOrder(beg, end));
+        }
+
+        Ok(Self { beg, end })
+    }
+
+    /// First address of the range.
+    pub fn beg(&self) -> IpAddr {
+        self.beg
+    }
+
+    /// Last address of the range (inclusive).
+    pub fn end(&self) -> IpAddr {
+        self.end
+    }
+
+    pub fn len(&self) -> u128 {
+        assert!(self.beg <= self.end, "{PANIC_NAUGHTY}");
+        match (self.beg, self.end) {
+            (IpAddr::V4(beg_v4), IpAddr::V4(end_v4)) => {
+                (u32::from(end_v4) - u32::from(beg_v4)) as u128 + 1
+            }
+            (IpAddr::V6(beg_v6), IpAddr::V6(end_v6)) => {
+                let beg = u128::from(beg_v6);
+                let end = u128::from(end_v6);
+                end.saturating_sub(beg).saturating_add(1)
+            }
+            _ => unreachable!("{ERR_MISMATCH}"),
+        }
+    }
+
+    /// Return an iterator over all [IpAddr]s in the range.
+    pub fn iter(&self) -> IpIterator {
+        IpIterator::new(Range::from(*self))
+    }
+}
+
+impl IntoIterator for IpRange {
+    type Item = IpAddr;
+    type IntoIter = IpIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl From<IpRange> for Range {
+    fn from(r: IpRange) -> Self {
+        match (r.beg, r.end) {
+            (IpAddr::V4(a), IpAddr::V4(b)) => Range {
+                fam: IpFam::V4,
+                beg: u32::from(a) as u128,
+                end: u32::from(b) as u128,
+            },
+            (IpAddr::V6(a), IpAddr::V6(b)) => Range {
+                fam: IpFam::V6,
+                beg: u128::from(a),
+                end: u128::from(b),
+            },
+            // IpRange::new() rejects mixed families
+            _ => unreachable!("{ERR_MISMATCH}"),
+        }
+    }
+}
+
 /* ---------------------------------- */
 
-/// Iterator over all [IpAddr]s in a CIDR range.
-pub struct CidrIterator {
+/**
+Iterator over all [IpAddr]s of a [Cidr] or an [IpRange], in ascending order.
+
+Walks plain integers internally and stops *on* the last address instead of
+stepping past it, so ranges ending at the top of the address space
+(`255.255.255.255`, `ffff:...:ffff`) terminate too.
+*/
+#[derive(Clone, Debug)]
+pub struct IpIterator {
     fam: IpFam,
     current: u128,
     end: u128,
     done: bool,
 }
 
-impl CidrIterator {
-    pub fn new(cidr: Cidr) -> Self {
-        let range: Range = cidr_to_range(cidr);
-
-        debug_assert_eq!(
-            range.len(),
-            cidr.len(),
-            "CidrIterator: length mismatch between 'Cidr' and 'Range' structs"
-        );
-
-        CidrIterator {
-            fam: range.fam,
-            current: range.beg,
-            end: range.end,
+impl IpIterator {
+    /// `r` must satisfy `r.beg <= r.end`.
+    pub(crate) fn new(r: Range) -> Self {
+        debug_assert!(r.beg <= r.end, "{PANIC_NAUGHTY}");
+        IpIterator {
+            fam: r.fam,
+            current: r.beg,
+            end: r.end,
             done: false,
         }
     }
 }
 
-impl Iterator for CidrIterator {
+impl Iterator for IpIterator {
     type Item = IpAddr;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -232,107 +335,28 @@ impl Iterator for CidrIterator {
 
         Some(ip)
     }
-}
 
-/* -------------------------------------------------------------------------- */
-
-/// Inclusive range of IP addresses (endpoints are included).
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct IpRange {
-    pub beg: IpAddr,
-    pub end: IpAddr,
-}
-
-impl IpRange {
-    /// Create a new [IpRange]. Ensures that IP families match and order is correct.
-    pub fn new(beg: IpAddr, end: IpAddr) -> Result<Self, AddressError> {
-        // Validate same IP version
-        match (beg, end) {
-            (IpAddr::V4(a), IpAddr::V6(b)) | (IpAddr::V6(b), IpAddr::V4(a)) => {
-                return Err(AddressError::Mismatch(a.into(), b.into()));
-            }
-            _ => {}
-        }
-
-        // Validate order
-        if beg > end {
-            return Err(AddressError::RangeOrder(beg, end));
-        }
-
-        Ok(Self { beg, end })
-    }
-
-    pub fn len(&self) -> u128 {
-        assert!(self.beg <= self.end, "{PANIC_NAUGHTY}");
-        match (self.beg, self.end) {
-            (IpAddr::V4(beg_v4), IpAddr::V4(end_v4)) => {
-                (u32::from(end_v4) - u32::from(beg_v4)) as u128 + 1
-            }
-            (IpAddr::V6(beg_v6), IpAddr::V6(end_v6)) => {
-                let beg = u128::from(beg_v6);
-                let end = u128::from(end_v6);
-                end.saturating_sub(beg).saturating_add(1)
-            }
-            _ => unreachable!("{ERR_MISMATCH}"),
-        }
-    }
-
-    /// Return an iterator over all [IpAddr]s in the range.
-    pub fn iter(&self) -> IpRangeIterator {
-        IpRangeIterator {
-            current: self.beg,
-            end: self.end,
-            done: false,
-        }
-    }
-}
-
-impl IntoIterator for IpRange {
-    type Item = IpAddr;
-    type IntoIter = IpRangeIterator;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-/* ---------------------------------- */
-
-/// Iterator over an IP range.
-pub struct IpRangeIterator {
-    current: IpAddr,
-    end: IpAddr,
-    done: bool,
-}
-
-impl Iterator for IpRangeIterator {
-    type Item = IpAddr;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    /// Exact whenever the remaining count fits in a [usize] (so `collect()` preallocates).
+    fn size_hint(&self) -> (usize, Option<usize>) {
         if self.done {
-            return None;
+            return (0, Some(0));
         }
-
-        let result = self.current;
-
-        if self.current == self.end {
-            self.done = true;
-        } else {
-            self.current = match self.current {
-                IpAddr::V4(ipv4) => IpAddr::V4(Ipv4Addr::from(u32::from(ipv4).saturating_add(1))),
-                IpAddr::V6(ipv6) => IpAddr::V6(Ipv6Addr::from(u128::from(ipv6).saturating_add(1))),
-            };
+        // end - current + 1 overflows only for the full v6 space
+        match (self.end - self.current).checked_add(1).map(usize::try_from) {
+            Some(Ok(n)) => (n, Some(n)),
+            _ => (usize::MAX, None),
         }
-
-        Some(result)
     }
 }
+
+impl FusedIterator for IpIterator {}
 
 /* -------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     const TEST_V4: &str = "192.168.1.0/30";
     const TEST_V6: &str = "::/126";
@@ -341,6 +365,11 @@ mod tests {
     const TEST_TOP_V6: [(&str, usize); 2] = [
         ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128", 1),
         ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc/126", 4),
+    ];
+    // ranges ending at the top of the address space: (beg, end, count)
+    const TEST_TOP_RANGE: [(&str, &str, usize); 2] = [
+        ("255.255.255.250", "255.255.255.255", 6),
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffd", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 3),
     ];
 
     #[test]
@@ -440,5 +469,64 @@ mod tests {
             IpAddr::V6(Ipv6Addr::from(5u128)),
         ];
         assert_eq!(ips, expected);
+    }
+
+    #[test]
+    fn test_cidr_parse_errors() {
+        // (input, expected error, its Display: same text as the old String errors)
+        #[rustfmt::skip]
+        let tests: Vec<(&str, AddressError, &str)> = vec![
+            ("nope",         AddressError::InvalidAddr("nope".into()),        "invalid IP address: 'nope'"),
+            ("1.2.3.4/8/8",  AddressError::InvalidCidrFmt("1.2.3.4/8/8".into()), "invalid CIDR format (too many slashes): '1.2.3.4/8/8'"),
+            ("x/8",          AddressError::InvalidCidrAddr("x".into()),       "invalid IP address in CIDR: 'x'"),
+            ("10.0.0.0/300", AddressError::InvalidCidrPrefix("300".into()),   "invalid prefix in CIDR: '300'"),
+            ("10.0.0.0/33",  AddressError::InvalidV4Prefix(33),               "invalid IPv4 prefix in CIDR: '33'"),
+            ("::/129",       AddressError::InvalidV6Prefix(129),              "invalid IPv6 prefix in CIDR: '129'"),
+        ];
+
+        for (input, expected, msg) in tests {
+            let err: AddressError = input.parse::<Cidr>().unwrap_err();
+            assert_eq!(err, expected, "Failed: '{input}'");
+            assert_eq!(err.to_string(), msg, "Failed: '{input}'");
+        }
+    }
+
+    #[test]
+    fn test_iprange_accessors_and_errors() {
+        let (a, b): (IpAddr, IpAddr) = ("10.0.0.1".parse().unwrap(), "10.0.0.9".parse().unwrap());
+        let r: IpRange = IpRange::new(a, b).unwrap();
+        assert_eq!((r.beg(), r.end(), r.len()), (a, b, 9));
+
+        assert_eq!(IpRange::new(b, a), Err(AddressError::RangeOrder(b, a)));
+        // mismatch keeps the caller's argument order
+        let v6: IpAddr = "::1".parse().unwrap();
+        assert_eq!(IpRange::new(v6, a), Err(AddressError::Mismatch(v6, a)));
+        assert_eq!(IpRange::new(a, v6), Err(AddressError::Mismatch(a, v6)));
+    }
+
+    #[test]
+    fn test_iprange_iter_top() {
+        for (beg, end, count) in TEST_TOP_RANGE {
+            let r: IpRange = IpRange::new(beg.parse().unwrap(), end.parse().unwrap()).unwrap();
+            let ips: Vec<IpAddr> = r.iter().take(count + 5).collect();
+            assert_eq!(ips.len(), count, "Failed: '{beg}-{end}'");
+            assert_eq!(ips[count - 1], end.parse::<IpAddr>().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_iter_size_hint() {
+        let cidr: Cidr = TEST_V4.parse().unwrap();
+        let mut it: IpIterator = cidr.iter();
+        assert_eq!(it.size_hint(), (4, Some(4)));
+        it.next();
+        assert_eq!(it.size_hint(), (3, Some(3)));
+        assert_eq!(it.by_ref().count(), 3);
+        assert_eq!(it.size_hint(), (0, Some(0)));
+        assert_eq!(it.next(), None); // fused
+
+        // full v6 space: 2^128 addresses cannot be counted in a usize
+        let all: Cidr = "::/0".parse().unwrap();
+        assert_eq!(all.iter().size_hint(), (usize::MAX, None));
     }
 }

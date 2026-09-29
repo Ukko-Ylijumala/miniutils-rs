@@ -19,11 +19,10 @@ A canonicalized (absolute, resolved) path to the directory.
 
 ## Errors
 This function will return an error if the given path does not exist,
-is not a directory, cannot be listed (f.ex. lacking permissions), if it
-fails to get metadata for the directory, or if the canonicalized path
-is not valid UTF-8.
+is not a directory, cannot be listed (f.ex. lacking permissions), or if
+it fails to get metadata for the directory.
 */
-pub fn check_readable_dir<P: AsRef<Path>>(path: P) -> Result<String, io::Error> {
+pub fn check_readable_dir<P: AsRef<Path>>(path: P) -> Result<PathBuf, io::Error> {
     let path: &Path = path.as_ref();
 
     /*
@@ -54,14 +53,7 @@ pub fn check_readable_dir<P: AsRef<Path>>(path: P) -> Result<String, io::Error> 
         return Err(log_err(e.kind(), errmsg));
     }
 
-    let canonical: PathBuf = path.canonicalize()?;
-    match canonical.to_str() {
-        Some(s) => Ok(s.to_string()),
-        None => {
-            let errmsg: String = format!("Path is not valid UTF-8: {}", canonical.display());
-            Err(log_err(io::ErrorKind::InvalidData, errmsg))
-        }
-    }
+    path.canonicalize()
 }
 
 /// Log an error message and wrap it into an [io::Error] of the given kind.
@@ -90,8 +82,8 @@ mod tests {
     #[test]
     fn test_readable_dir_ok() {
         let dir: PathBuf = scratch("ok");
-        let res: String = check_readable_dir(&dir).unwrap();
-        assert_eq!(PathBuf::from(res), dir.canonicalize().unwrap());
+        let res: PathBuf = check_readable_dir(&dir).unwrap();
+        assert_eq!(res, dir.canonicalize().unwrap());
         fs::remove_dir_all(&dir).unwrap();
     }
 

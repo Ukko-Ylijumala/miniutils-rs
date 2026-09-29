@@ -18,14 +18,16 @@ use strings::*;
 
 pub use addresses::*;
 pub use collapsing::*;
-pub use structs::{Cidr, IpFam, IpRange};
+pub use structs::{Cidr, IpFam, IpIterator, IpRange};
 
 pub(crate) const IPV4_BITS: u8 = 32;
 pub(crate) const IPV6_BITS: u8 = 128;
 pub(crate) const MAX_RANGE_SIZE: usize = 65536; // max number of addresses in a range allowed
 
+/// Errors from parsing IPs, ranges and CIDRs. May gain variants in minor versions.
 #[rustfmt::skip]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum AddressError {
     /// invalid IP/range/CIDR
     Invalid(String),
@@ -40,6 +42,16 @@ pub enum AddressError {
     RangeOrder(IpAddr, IpAddr),
     /// start and end are not the same IP family (v4 vs v6).
     Mismatch(IpAddr, IpAddr),
+    /// invalid plain IP address (no prefix) given as a CIDR
+    InvalidAddr(String),
+    /// CIDR has more than one slash
+    InvalidCidrFmt(String),
+    InvalidCidrAddr(String),
+    InvalidCidrPrefix(String),
+    /// prefix is > 32
+    InvalidV4Prefix(u8),
+    /// prefix is > 128
+    InvalidV6Prefix(u8),
 }
 
 impl fmt::Display for AddressError {
@@ -74,6 +86,24 @@ impl fmt::Display for AddressError {
             }
             AddressError::InvalidRangeEndVal { val, source } => {
                 write!(f, "{ERR_RNG_END}: '{val}': {source}")
+            }
+            AddressError::InvalidAddr(addr) => {
+                write!(f, "{ERR_INV_ADDR}: '{addr}'")
+            }
+            AddressError::InvalidCidrFmt(cidr) => {
+                write!(f, "{ERR_CIDR_FMT}: '{cidr}'")
+            }
+            AddressError::InvalidCidrAddr(addr) => {
+                write!(f, "{ERR_CIDR_INV_ADDR}: '{addr}'")
+            }
+            AddressError::InvalidCidrPrefix(prefix) => {
+                write!(f, "{ERR_CIDR_INV_PRE}: '{prefix}'")
+            }
+            AddressError::InvalidV4Prefix(prefix) => {
+                write!(f, "{ERR_CIDR_INV_V4}: '{prefix}'")
+            }
+            AddressError::InvalidV6Prefix(prefix) => {
+                write!(f, "{ERR_CIDR_INV_V6}: '{prefix}'")
             }
         }
     }

@@ -278,7 +278,7 @@ where P: AsRef<Path>,
             }
 
             Component::Normal(s) => {
-                if s.to_string_lossy().chars().all(|c| c == '.') {
+                if s.as_encoded_bytes().iter().all(|&b| b == b'.') {
                     // skip components that consist only of dots
                     continue;
                 }

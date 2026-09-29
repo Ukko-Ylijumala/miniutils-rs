@@ -39,12 +39,13 @@ impl ProcessInfo {
         let mut sys: System = System::new();
         // Do the initial refresh of the process info already here.
         refresh_processes(&mut sys, &[s_p], &kind);
+        let (mem, cpu): (u64, f32) = mem_and_cpu(&sys, s_p);
         Self {
             pid,
             p: s_p,
             inner: RwLock::new(ProcessInfoInner {
-                mem: sys.process(s_p).map_or_else(|| 0, |p| p.memory()),
-                cpu: sys.process(s_p).map_or_else(|| 0.0, |p| p.cpu_usage()),
+                mem,
+                cpu,
                 sys,
                 upd: Instant::now(),
                 ival: Duration::from_millis(MIN_INTERVAL_MS),
@@ -73,8 +74,7 @@ impl ProcessInfo {
             return;
         }
         refresh_processes(&mut i.sys, &[self.p], &self.kind);
-        i.mem = i.sys.process(self.p).map_or_else(|| 0, |p| p.memory());
-        i.cpu = i.sys.process(self.p).map_or_else(|| 0.0, |p| p.cpu_usage());
+        (i.mem, i.cpu) = mem_and_cpu(&i.sys, self.p);
         i.upd = Instant::now();
     }
 
@@ -138,4 +138,9 @@ impl Default for ProcessInfo {
 /// Refresh the [sysinfo::System] object for given processes only.
 fn refresh_processes(sys: &mut System, pids: &[Pid], kind: &ProcessRefreshKind) {
     sys.refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, *kind);
+}
+
+/// Memory (bytes) and CPU usage (%) of a process with a single lookup, zeros if it's gone.
+fn mem_and_cpu(sys: &System, pid: Pid) -> (u64, f32) {
+    sys.process(pid).map_or((0, 0.0), |p| (p.memory(), p.cpu_usage()))
 }

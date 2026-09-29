@@ -21,25 +21,7 @@ If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
 fuzzily merged as well (over-approximation).
 */
 pub fn collapse_cidrs(input: &[Cidr], max_gap: u128) -> Vec<Cidr> {
-    let mut ranges: Vec<Range> = input.iter().map(|c| cidr_to_range(*c)).collect();
-
-    // 1) Sort ranges
-    ranges.sort_unstable_by_key(Range::cmp_key);
-
-    // 2) Merge overlaps/adjacent within each family
-    let mut merged: Vec<Range> = merge_ranges(&ranges);
-
-    // 2b) Fuzzy merge nearby with gaps <= max_gap
-    if max_gap > 0 {
-        merged = merge_ranges_fuzzy(&merged, max_gap);
-    }
-
-    // 3) Convert each merged range back into minimal CIDRs
-    let mut out: Vec<Cidr> = Vec::new();
-    for r in merged {
-        out.extend(range_to_cidrs(r));
-    }
-    out
+    collapse(input.iter().map(|c| cidr_to_range(*c)).collect(), max_gap)
 }
 
 /**
@@ -49,8 +31,7 @@ If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
 fuzzily merged as well (over-approximation).
 */
 pub fn collapse_ips(input: &[IpAddr], max_gap: u128) -> Vec<Cidr> {
-    let cidrs: Vec<Cidr> = input.iter().map(|&ip| ip_to_host_cidr(ip)).collect();
-    collapse_cidrs(&cidrs, max_gap)
+    collapse(input.iter().map(|&ip| cidr_to_range(ip_to_host_cidr(ip))).collect(), max_gap)
 }
 
 /**
@@ -64,17 +45,17 @@ NOTE: entries that parse as neither a CIDR nor an IP (including ranges like
 into [Cidr], [parse_ip_range](super::parse_ip_range)) if you need to report bad input.
 */
 pub fn collapse_strings(input: &[impl AsRef<str>], max_gap: u128) -> Vec<Cidr> {
-    let mut cidrs: Vec<Cidr> = Vec::with_capacity(input.len());
+    let mut ranges: Vec<Range> = Vec::with_capacity(input.len());
     for s in input {
         if s.as_ref().contains(SLASH) {
             if let Ok(cidr) = s.as_ref().parse::<Cidr>() {
-                cidrs.push(cidr);
+                ranges.push(cidr_to_range(cidr));
             }
         } else if let Ok(ip) = s.as_ref().parse::<IpAddr>() {
-            cidrs.push(ip_to_host_cidr(ip));
+            ranges.push(cidr_to_range(ip_to_host_cidr(ip)));
         }
     }
-    collapse_cidrs(&cidrs, max_gap)
+    collapse(ranges, max_gap)
 }
 
 /// Convert a single IP (host) to an equivalent CIDR (/32 or /128).
@@ -97,20 +78,7 @@ Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
 This does *not* enumerate IPs and hence scales to very large ranges.
 */
 pub fn collapse_ranges(input: &[IpRange]) -> Result<Vec<Cidr>, AddressError> {
-    let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
-
-    // 1) Sort ranges
-    ranges.sort_unstable_by_key(Range::cmp_key);
-
-    // 2) Merge overlaps/adjacent within each family
-    let merged: Vec<Range> = merge_ranges(&ranges);
-
-    // 3) Convert merged ranges to minimal CIDRs
-    let mut out: Vec<Cidr> = Vec::new();
-    for r in merged {
-        out.extend(range_to_cidrs(r));
-    }
-    Ok(out)
+    Ok(collapse(input.iter().copied().map(Range::from).collect(), 0))
 }
 
 /**
@@ -119,23 +87,7 @@ Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
 Fuzzily merges nearby ranges separated by <= `max_gap` IPs (over-approximation).
 */
 pub fn collapse_ranges_fuzzy(input: &[IpRange], max_gap: u128) -> Result<Vec<Cidr>, AddressError> {
-    let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
-
-    // 1) Sort ranges
-    ranges.sort_unstable_by_key(Range::cmp_key);
-
-    // 2) Merge overlaps/adjacent within each family
-    let mut merged: Vec<Range> = merge_ranges(&ranges);
-
-    // 2b) Fuzzy merge nearby with gaps <= max_gap
-    merged = merge_ranges_fuzzy(&merged, max_gap);
-
-    // 3) Convert merged ranges to minimal CIDRs
-    let mut out: Vec<Cidr> = Vec::with_capacity(merged.len());
-    for r in merged {
-        out.extend(range_to_cidrs(r));
-    }
-    Ok(out)
+    Ok(collapse(input.iter().copied().map(Range::from).collect(), max_gap))
 }
 
 /// Convenience overload for call sites which have tuples.
@@ -180,53 +132,47 @@ pub(crate) fn cidr_to_range(c: Cidr) -> Range {
     }
 }
 
-/// Merge overlapping/adjacent ranges within each IP family. Input must be sorted.
-#[inline]
-fn merge_ranges(sorted: &[Range]) -> Vec<Range> {
-    let mut out: Vec<Range> = Vec::with_capacity(sorted.len());
-    for r in sorted.iter().copied() {
-        if let Some(last) = out.last_mut() {
-            if last.fam == r.fam {
-                // overlap or adjacency?
-                if r.beg <= last.end.saturating_add(1) {
-                    if r.end > last.end {
-                        last.end = r.end;
-                    }
-                    continue;
-                }
-            }
-        }
-        out.push(r);
+/**
+The pipeline behind all collapse_* functions:
+1. sort
+2. merge overlapping/adjacent ranges (and nearby ones if `max_gap` > 0) within each family
+3. decompose each merged range into minimal CIDRs
+*/
+fn collapse(mut ranges: Vec<Range>, max_gap: u128) -> Vec<Cidr> {
+    ranges.sort_unstable_by_key(Range::cmp_key);
+    merge_ranges(&mut ranges, max_gap);
+
+    let mut out: Vec<Cidr> = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        range_to_cidrs(r, &mut out);
     }
     out
 }
 
 /**
-Merge nearby ranges separated by <= `max_gap` IPs (fuzzy over-approximation).
+Merge overlapping/adjacent ranges within each IP family, in place, in a
+single pass. Ranges separated by <= `max_gap` IPs are merged as well (fuzzy
+over-approximation); `max_gap == 0` merges only overlaps and adjacency.
 
-Input must be sorted and previously merged, or it'll be a GIGO situation.
+Input must be sorted (see [Range::cmp_key]).
 */
 #[inline]
-fn merge_ranges_fuzzy(merged: &[Range], max_gap: u128) -> Vec<Range> {
-    let mut out: Vec<Range> = Vec::with_capacity(merged.len());
-    for r in merged.iter().copied() {
-        if let Some(last) = out.last_mut() {
-            if last.fam == r.fam {
-                let gap: u128 = r.beg.saturating_sub(last.end.saturating_add(1));
-                if gap <= max_gap {
-                    // swallow the gap by extending end
-                    last.end = r.end.max(last.end);
-                    continue;
-                }
-            }
+fn merge_ranges(sorted: &mut Vec<Range>, max_gap: u128) {
+    // dedup_by passes (current, last kept): returning true drops 'r' once folded into 'last'
+    sorted.dedup_by(|r: &mut Range, last: &mut Range| {
+        // number of IPs strictly between the two ranges: 0 for overlap or adjacency
+        let gap: u128 = r.beg.saturating_sub(last.end.saturating_add(1));
+        if last.fam == r.fam && gap <= max_gap {
+            // swallow the gap (if any) by extending end
+            last.end = last.end.max(r.end);
+            return true;
         }
-        out.push(r);
-    }
-    out
+        false
+    });
 }
 
-/// Decompose an inclusive range into the minimal set of CIDRs.
-fn range_to_cidrs(r: Range) -> Vec<Cidr> {
+/// Decompose an inclusive range into the minimal set of CIDRs, appended to `out`.
+fn range_to_cidrs(r: Range, out: &mut Vec<Cidr>) {
     let bits: u8 = match r.fam {
         IpFam::V4 => IPV4_BITS,
         IpFam::V6 => IPV6_BITS,
@@ -235,12 +181,12 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
     // Full address space special-case
     if bits == IPV6_BITS && r.beg == 0 && r.end == u128::MAX {
         #[rustfmt::skip]
-        return vec![Cidr { addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED), prefix: 0 }];
+        out.push(Cidr { addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED), prefix: 0 });
+        return;
     }
 
     let mut start: u128 = r.beg;
     let end: u128 = r.end;
-    let mut out: Vec<Cidr> = Vec::new();
 
     while start <= end {
         /*
@@ -284,8 +230,6 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
             None => break,
         }
     }
-
-    out
 }
 
 /* ---------------------------------- */
@@ -433,7 +377,8 @@ mod tests {
             beg: u32::from(Ipv4Addr::new(172, 16, 0, 4)) as u128,
             end: u32::from(Ipv4Addr::new(172, 16, 0, 7)) as u128,
         };
-        let cidrs = range_to_cidrs(r);
+        let mut cidrs: Vec<Cidr> = Vec::new();
+        range_to_cidrs(r, &mut cidrs);
         let cidr_strs: Vec<String> = cidrs.iter().map(|c| c.to_string()).collect();
         assert_eq!(cidr_strs[0], RES_D_V4.to_string());
     }

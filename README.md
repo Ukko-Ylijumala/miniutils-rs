@@ -20,7 +20,7 @@ Behind cargo features (all enabled by default):
 | `filesystem` | `check_readable_dir`                                                      |
 | `iptools`    | `miniutils::iptools`: IP/CIDR/range parsing, iteration and CIDR collapsing |
 | `sysinfo`    | `SysInfo` and `ProcessInfo` system/process stats, `sysinfo-printer` binary |
-| `tabulator`  | `simple_tabulate` / `tabulate_with_missing` text tables (ANSI-aware)      |
+| `tabulator`  | `simple_tabulate` / `tabulate_with_missing` text tables (ANSI and wide-char aware) |
 
 ## Installation
 
@@ -42,7 +42,9 @@ default-features = false
 features = ["iptools"]
 ```
 
-Releases are tagged `vX.Y.Z`; use `tag = "v0.3.1"` instead of `version` to pin one exactly.
+Releases are tagged `vX.Y.Z`; use `tag = "v0.3.2"` instead of `version` to pin one exactly.
+
+Requires Rust 1.88 or newer.
 
 ## Basic Usage
 
@@ -67,6 +69,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Version History
 
+- 0.3.2: Performance
+    - tabulator ~3x faster: each cell measured once, rows built in one buffer
+    - tabulator measures display width (CJK / emoji count as 2 columns) and no longer needs `regex` or `lazy_static`
+    - IP collapsing merges in a single in-place pass (10-27% faster), one shared pipeline for all `collapse_*` functions
+    - minimum supported Rust version pinned: 1.88 (`rust-version`, required by `sysinfo` 0.37)
 - 0.3.1: Small fixes
     - `tabulate_with_missing` no longer panics on rows short by 2+ columns
     - path sanitizing also removes C1 control characters (`U+0080..=U+009F`)

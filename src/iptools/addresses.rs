@@ -15,6 +15,7 @@ Supported formats:
 - Single IP: 10.10.10.1
 - CIDR: 10.10.10.0/28
 - Short range: 10.10.10.1-10 (last octet range)
+- Short range (v6): 2001:db8::1-ff (last hextet range, hexadecimal)
 - Full range: 10.10.10.1-10.10.10.10
 
 NOTE: refuses to generate ranges larger than [MAX_RANGE_SIZE] to guard
@@ -58,6 +59,7 @@ pub fn parse_ip_or_range(arg: impl AsRef<str>) -> Result<Vec<IpAddr>, AddressErr
 /**
 Parse an IP range in the format:
 - 10.10.10.1-10 (short form, last octet only)
+- 2001:db8::1-ff (short form, last hextet only, hexadecimal)
 - 10.10.10.1-10.10.10.10 (full form)
 
 ### Returns
@@ -97,10 +99,16 @@ pub fn parse_ip_range(arg: impl AsRef<str>) -> Result<IpRange, AddressError> {
     Ok(IpRange::new(beg_ip, end_ip)?)
 }
 
-/// Parse short-form range end (e.g., "10" in "192.168.1.1-10")
+/**
+Parse short-form range end, f.ex. "10" in "192.168.1.1-10" (decimal octet)
+or "ff" in "2001:db8::1-ff" (hexadecimal hextet, like the address itself).
+*/
 fn parse_short_range_end(beg_ip: &IpAddr, end_str: &str) -> Result<IpAddr, AddressError> {
-    let end_val: u32 = end_str
-        .parse()
+    let radix: u32 = match beg_ip {
+        IpAddr::V4(_) => 10,
+        IpAddr::V6(_) => 16,
+    };
+    let end_val: u32 = u32::from_str_radix(end_str, radix)
         .map_err(|source| AddressError::InvalidRangeEndVal {
             val: end_str.into(),
             source,
@@ -116,7 +124,7 @@ fn parse_short_range_end(beg_ip: &IpAddr, end_str: &str) -> Result<IpAddr, Addre
             Ok(IpAddr::V4(new_ip))
         }
         IpAddr::V6(start_v6) => {
-            if end_val > 65535 {
+            if end_val > 0xffff {
                 return Err(AddressError::InvalidV6Hextet(end_val));
             }
             let segments: [u16; 8] = start_v6.segments();
@@ -200,6 +208,15 @@ mod tests {
     const TOOBIG_V6: &str = "::1-::ffff:ffff"; // 4B addresses
     const ALL_V6: &str = "::/0"; // 2^128 addresses, doesn't fit in u128
     const HALF_V6: &str = "::/1";
+    // v6 short-range ends are hex, like the hextet they replace: (range, end, count)
+    #[rustfmt::skip]
+    const RANGE_V6_HEX: [(&str, &str, usize); 3] = [
+        ("::1-10",          "::10",         16),
+        ("::1-ff",          "::ff",         255),
+        ("2001:db8::a-FF",  "2001:db8::ff", 246),
+    ];
+    const BAD_HEXTET: &str = "::1-10000";
+    const BAD_OCTET_HEX: &str = "10.0.0.1-ff"; // v4 short-range ends stay decimal
 
     #[test]
     fn test_parse_single_ip() {
@@ -271,6 +288,20 @@ mod tests {
     fn test_toobig_v6() {
         let result: Result<Vec<IpAddr>, AddressError> = parse_ip_or_range(TOOBIG_V6);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ipv6_short_range_hex() {
+        for (input, end, count) in RANGE_V6_HEX {
+            let result: Vec<IpAddr> = parse_ip_or_range(input).unwrap();
+            assert_eq!(result.len(), count, "Failed: '{input}'");
+            assert_eq!(result[count - 1], end.parse::<IpAddr>().unwrap(), "Failed: '{input}'");
+        }
+        assert_eq!(parse_ip_range(BAD_HEXTET), Err(AddressError::InvalidV6Hextet(0x10000)));
+        assert!(matches!(
+            parse_ip_range(BAD_OCTET_HEX),
+            Err(AddressError::InvalidRangeEndVal { .. })
+        ));
     }
 
     #[test]

@@ -55,7 +55,7 @@ impl fmt::Display for AddressError {
                 write!(f, "{ERR_V4_OCTET} {val}")
             }
             AddressError::InvalidV6Hextet(val) => {
-                write!(f, "{ERR_V6_HEXTET} {val}")
+                write!(f, "{ERR_V6_HEXTET} {val:x}")
             }
             AddressError::RangeTooLarge(size) => {
                 write!(f, "{ERR_RNG_TOOLARGE}: {size} (max {MAX_RANGE_SIZE})")

@@ -12,7 +12,7 @@ pub(crate) static ERR_START: &str = "invalid start IP in range";
 pub(crate) static ERR_END: &str = "invalid end IP in range";
 pub(crate) static ERR_RNG_END: &str = "invalid range end value";
 pub(crate) static ERR_V4_OCTET: &str = "IPv4 octet must be <= 255, got";
-pub(crate) static ERR_V6_HEXTET: &str = "IPv6 hextet must be <= 65535, got";
+pub(crate) static ERR_V6_HEXTET: &str = "IPv6 hextet must be <= ffff, got";
 pub(crate) static ERR_RNG_ORDER: &str = "start IP is greater than end IP";
 pub(crate) static ERR_RNG_TOOLARGE: &str = "range too large - addresses";
 pub(crate) static ERR_MISMATCH: &str = "cannot mix IPv4 and IPv6 in range";

@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -17,6 +17,11 @@ Supported formats:
 - Short range: 10.10.10.1-10 (last octet range)
 - Short range (v6): 2001:db8::1-ff (last hextet range, hexadecimal)
 - Full range: 10.10.10.1-10.10.10.10
+
+A CIDR yields its *usable host* addresses: for IPv4 prefixes shorter than
+/31 the network and broadcast addresses are left out (10.10.10.0/30 gives
+.1 and .2). IPv6 CIDRs, /31 and /32 yield every address. Use
+[Cidr::iter](super::Cidr::iter) to get every address of an IPv4 CIDR too.
 
 NOTE: refuses to generate ranges larger than [MAX_RANGE_SIZE] to guard
 against an obvious footgun scenario, especially with IPv6.
@@ -96,7 +101,7 @@ pub fn parse_ip_range(arg: impl AsRef<str>) -> Result<IpRange, AddressError> {
         parse_short_range_end(&beg_ip, end_str)?
     };
 
-    Ok(IpRange::new(beg_ip, end_ip)?)
+    IpRange::new(beg_ip, end_ip)
 }
 
 /**

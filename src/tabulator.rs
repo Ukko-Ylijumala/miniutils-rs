@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -28,17 +28,16 @@ fn format_row(row: &[String], widths: &[usize], missing: Option<&str>) -> String
         //items.push(item.to_owned() + &pad);
     }
 
-    // Pad with `missing` value(s) if the row has too few items
-    if missing.is_some() {
-        let diff: usize = widths.len().saturating_sub(items.len());
-        if diff > 0 {
-            let missing: &str = missing.expect("\"missing\" should be a string");
-            let missing_vis_len: usize = visible_len(missing);
-            for j in 0..diff {
-                let pad: String =
-                    " ".repeat(widths[items.len() + j].saturating_sub(missing_vis_len));
-                items.push(format!("{missing}{pad}"));
-            }
+    /*
+    Pad with `missing` value(s) if the row has too few items: one per absent
+    column. (Indexing with 'items.len() + j' while pushing skipped every other
+    width and ran out of bounds for rows short by 2+ columns.)
+    */
+    if let Some(missing) = missing {
+        let missing_vis_len: usize = visible_len(missing);
+        for width in &widths[row.len()..] {
+            let pad: String = " ".repeat(width.saturating_sub(missing_vis_len));
+            items.push(format!("{missing}{pad}"));
         }
     }
     items.join(" | ")
@@ -119,7 +118,7 @@ where
 }
 
 /**
-Format a collection of rows as a table for printing. Handles Option<T> values,
+Format a collection of rows as a table for printing. Handles `Option<T>` values,
 replacing None with the provided `missing` string.
 
 ## Arguments
@@ -166,4 +165,35 @@ where
 
     tabulate(data_rows, headers.is_some(), &mut formatted, Some(missing));
     formatted
+}
+
+/* ######################################################################### */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HDRS_2: [&str; 2] = ["a", "b"];
+    const HDRS_3: [&str; 3] = ["a", "b", "c"];
+    const RED: &str = "\x1b[31mred\x1b[0m";
+
+    #[test]
+    fn test_simple_tabulate() {
+        let out: Vec<String> = simple_tabulate(vec![vec![1, 22], vec![333, 4]], Some(&HDRS_2));
+        assert_eq!(out, ["a   | b ", "----+---", "1   | 22", "333 | 4 "]);
+    }
+
+    #[test]
+    fn test_ansi_codes_are_invisible() {
+        let out: Vec<String> = simple_tabulate(vec![vec![RED, "x"], vec!["ab", "y"]], None);
+        assert_eq!(out, [format!("{RED} | x"), "ab  | y".to_string()]);
+    }
+
+    #[test]
+    fn test_tabulate_with_missing() {
+        // row short by 2 columns used to panic (index out of bounds)
+        let rows: Vec<Vec<Option<i32>>> = vec![vec![Some(1), None, Some(3)], vec![Some(4)]];
+        let out: Vec<String> = tabulate_with_missing(rows, Some(&HDRS_3), "-");
+        assert_eq!(out, ["a | b | c", "--+---+--", "1 | - | 3", "4 | - | -"]);
+    }
 }

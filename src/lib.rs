@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2024-2026 Mikko Tanner. All rights reserved.
 
 #[cfg(feature = "filesystem")]
 mod filesystem;
@@ -173,11 +173,11 @@ in the context of a filesystem path.
 This function flags the following:
 - Null character, newline and carriage return
 - Backslash used as an escape character
-- Control characters (`\x01`..=`\x1F` and `\x7F`)
+- Control characters (`\x01`..=`\x1F`, `\x7F` and the C1 controls `\u{80}`..=`\u{9F}`)
 */
 #[inline]
 pub fn is_suspicious_char(c: char) -> bool {
-    matches!(c, '\0' | '\n' | '\r' | '\\' | '\x01'..='\x1F' | '\x7F')
+    matches!(c, '\0' | '\n' | '\r' | '\\' | '\x01'..='\x1F' | '\x7F' | '\u{80}'..='\u{9F}')
 }
 
 /**
@@ -223,7 +223,7 @@ resolve symlinks either.
 "Suspicous characters" in non-strict context are considered to be:
 - Null character, newline and carriage return
 - Backslash used as an escape character
-- Control characters (`\x01`..=`\x1F` and `\x7F`)
+- Control characters (`\x01`..=`\x1F`, `\x7F` and the C1 controls `\u{80}`..=`\u{9F}`)
 
 ... and in strict context, in addition to the above:
 - Wildcards: `*` and `?`
@@ -332,6 +332,7 @@ mod tests {
             "/a/b\0/c",                 "/a/b/c",
             "/a/b\n/c",                 "/a/b/c",
             "/a/b\r/c",                 "/a/b/c",
+            "/a/b\u{85}/c\u{9b}",        "/a/b/c",   // C1 controls (NEL, CSI)
             "/a/b\\/c",                 "/a/b/c",
             "a/b/../../.\\/\\//c",      "c",
 

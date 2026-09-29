@@ -22,7 +22,8 @@ pub use structs::{Cidr, IpFam, IpIterator, IpRange};
 
 pub(crate) const IPV4_BITS: u8 = 32;
 pub(crate) const IPV6_BITS: u8 = 128;
-pub(crate) const MAX_RANGE_SIZE: usize = 65536; // max number of addresses in a range allowed
+/// Max number of addresses [parse_ip_or_range] and [generate_ip_range] will produce.
+pub const MAX_RANGE_SIZE: usize = 65536;
 
 /// Errors from parsing IPs, ranges and CIDRs. May gain variants in minor versions.
 #[rustfmt::skip]

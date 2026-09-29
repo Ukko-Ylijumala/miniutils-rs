@@ -75,6 +75,11 @@ impl Cidr {
         1u128 << host_bits
     }
 
+    /// Always `false`: a [Cidr] holds at least one address (a /32 or /128 holds one).
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Number of IP addresses contained by this [Cidr] if IPv4, else None.
     pub fn len_v4(&self) -> Option<usize> {
         if self.is_ipv4() {
@@ -246,6 +251,11 @@ impl IpRange {
             }
             _ => unreachable!("{ERR_MISMATCH}"),
         }
+    }
+
+    /// Always `false`: an [IpRange] holds at least one address (`beg == end`).
+    pub fn is_empty(&self) -> bool {
+        false
     }
 
     /// Return an iterator over all [IpAddr]s in the range.

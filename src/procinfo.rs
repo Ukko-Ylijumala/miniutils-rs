@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2024-2026 Mikko Tanner. All rights reserved.
 
 use crate::HumanBytes as HuB;
 use parking_lot::RwLock;
@@ -95,9 +95,13 @@ impl ProcessInfo {
         self.inner.read().mem
     }
 
-    /// CPU usage as a percentage.
-    ///
-    /// Note: process info is updated when calling this method.
+    /**
+    CPU usage as a percentage.
+
+    Note: process info is updated when calling this method. CPU usage needs
+    two samples, so this is 0.0 until the first refresh interval has passed
+    since [ProcessInfo::new].
+    */
     pub fn cpu(&self) -> f32 {
         self.refresh();
         self.inner.read().cpu
@@ -122,6 +126,12 @@ impl ProcessInfo {
             self.mem_str(),
             self.cpu_str()
         );
+    }
+}
+
+impl Default for ProcessInfo {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

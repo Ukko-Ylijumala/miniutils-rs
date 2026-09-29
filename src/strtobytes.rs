@@ -11,7 +11,7 @@ const U128_LIMIT: f64 = u128::MAX as f64;
 Converts a size specification string to the equivalent number of bytes.
 
 Logic originally converted from Python to Rust, original here:
-https://stackoverflow.com/questions/44307480/convert-size-notation-with-units-100kb-32mb-to-number-of-bytes-in-python
+<https://stackoverflow.com/questions/44307480/convert-size-notation-with-units-100kb-32mb-to-number-of-bytes-in-python>
 
 The function recognizes suffixes for kilobytes (k, kb), megabytes (m, mb),
 gigabytes (g, gb), terabytes (t, tb), petabytes (p, pb), exabytes (e, eb),

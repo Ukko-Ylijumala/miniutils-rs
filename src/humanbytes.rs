@@ -1,11 +1,11 @@
-// Copyright (c) 2023 Mikko Tanner. All rights reserved.
+// Copyright (c) 2023-2026 Mikko Tanner. All rights reserved.
 
 /**
 The `HumanBytes` struct is a utility for converting a floating-point number
 to a human-readable string representation in either binary or metric units.
 
 Logic converted from Python to Rust, original here:
-https://stackoverflow.com/questions/12523586/python-format-size-application-converting-b-to-kb-mb-gb-tb
+<https://stackoverflow.com/questions/12523586/python-format-size-application-converting-b-to-kb-mb-gb-tb>
 
 The `to_human` function can represent the number in metric units (kB, MB, GB, TB, PB, EB, ZB, YB)
 or in binary units (KiB, MiB, GiB, TiB, PiB, EiB, ZiB, YiB). The number of digits after the decimal
@@ -49,7 +49,8 @@ impl HumanBytes {
         let unit_step: f64 = if metric { 1000.0 } else { 1024.0 };
         let unit_step_thresh: f64 = unit_step - Self::PRECISION_OFFSETS[precision];
 
-        let sign: &str = if num.is_sign_negative() { "-" } else { "" };
+        // `< 0.0` rather than is_sign_negative(), so that -0.0 isn't printed as "-0 B"
+        let sign: &str = if num < 0.0 { "-" } else { "" };
         let mut num: f64 = num.abs();
         let mut unit: &str = "";
 
@@ -86,5 +87,41 @@ impl HumanBytes {
             // this branch should be unreachable
             _ => unreachable!(),
         })
+    }
+}
+
+/* ######################################################################### */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[rustfmt::skip]
+    const OK: [(f64, bool, usize, &str); 10] = [
+        (0.0,           false, 0, "0 B"),
+        (-0.0,          false, 1, "0.0 B"),
+        (1023.0,        false, 0, "1023 B"),
+        (1023.5,        false, 0, "1 KiB"),     // would round to "1024 B"
+        (1023.96,       false, 1, "1.0 KiB"),   // would round to "1024.0 B"
+        (1536.0,        false, 1, "1.5 KiB"),
+        (1500.0,        true,  1, "1.5 kB"),
+        (-2048.0,       false, 2, "-2.00 KiB"),
+        (999.96,        true,  1, "1.0 kB"),
+        (2475880078570760549798248448.0, false, 0, "2048 YiB"), // 2^91: past the last unit
+    ];
+
+    #[test]
+    fn test_to_human() {
+        for (num, metric, precision, expected) in OK {
+            assert_eq!(HumanBytes::to_human(num, metric, precision).as_deref(), Ok(expected), "Failed: {num}");
+        }
+    }
+
+    #[test]
+    fn test_to_human_errors() {
+        for num in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MIN_POSITIVE / 2.0] {
+            assert!(HumanBytes::to_human(num, false, 1).is_err(), "Should fail: {num}");
+        }
+        assert!(HumanBytes::to_human(1.0, false, 4).is_err());
     }
 }

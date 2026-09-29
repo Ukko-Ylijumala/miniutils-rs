@@ -24,7 +24,7 @@ pub fn collapse_cidrs(input: &[Cidr], max_gap: u128) -> Vec<Cidr> {
     let mut ranges: Vec<Range> = input.iter().map(|c| cidr_to_range(*c)).collect();
 
     // 1) Sort ranges
-    ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
+    ranges.sort_unstable_by_key(Range::cmp_key);
 
     // 2) Merge overlaps/adjacent within each family
     let mut merged: Vec<Range> = merge_ranges(&ranges);
@@ -58,6 +58,10 @@ Collapse a list of strings (CIDRs or IPs) into an equivalent, minimal set of CID
 
 If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
 fuzzily merged as well (over-approximation).
+
+NOTE: entries that parse as neither a CIDR nor an IP (including ranges like
+`10.0.0.1-5`) are silently skipped. Parse them yourself (f.ex. `str::parse`
+into [Cidr], [parse_ip_range](super::parse_ip_range)) if you need to report bad input.
 */
 pub fn collapse_strings(input: &[impl AsRef<str>], max_gap: u128) -> Vec<Cidr> {
     let mut cidrs: Vec<Cidr> = Vec::with_capacity(input.len());
@@ -96,7 +100,7 @@ pub fn collapse_ranges(input: &[IpRange]) -> Result<Vec<Cidr>, AddressError> {
     let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
 
     // 1) Sort ranges
-    ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
+    ranges.sort_unstable_by_key(Range::cmp_key);
 
     // 2) Merge overlaps/adjacent within each family
     let merged: Vec<Range> = merge_ranges(&ranges);
@@ -118,7 +122,7 @@ pub fn collapse_ranges_fuzzy(input: &[IpRange], max_gap: u128) -> Result<Vec<Cid
     let mut ranges: Vec<Range> = input.iter().copied().map(Range::from).collect();
 
     // 1) Sort ranges
-    ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
+    ranges.sort_unstable_by_key(Range::cmp_key);
 
     // 2) Merge overlaps/adjacent within each family
     let mut merged: Vec<Range> = merge_ranges(&ranges);
@@ -426,8 +430,8 @@ mod tests {
     fn test_range_to_cidr() {
         let r = Range {
             fam: IpFam::V4,
-            beg: 172u128 << 24 | 16u128 << 16 | 0u128 << 8 | 4u128,
-            end: 172u128 << 24 | 16u128 << 16 | 0u128 << 8 | 7u128,
+            beg: u32::from(Ipv4Addr::new(172, 16, 0, 4)) as u128,
+            end: u32::from(Ipv4Addr::new(172, 16, 0, 7)) as u128,
         };
         let cidrs = range_to_cidrs(r);
         let cidr_strs: Vec<String> = cidrs.iter().map(|c| c.to_string()).collect();

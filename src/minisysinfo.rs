@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 
 use crate::HumanBytes as HuB;
 use parking_lot::RwLock;
@@ -43,7 +43,9 @@ pub struct MemoryStats {
     pub total: u64,
     pub free: u64,
     pub avail: u64,
+    /// Not provided by [sysinfo]: always 0.
     pub buffers: u64,
+    /// Not provided by [sysinfo]: always 0.
     pub cached: u64,
     pub swap_total: u64,
     pub swap_used: u64,
@@ -238,6 +240,13 @@ impl SysInfo {
             l5,
             l15
         );
+    }
+}
+
+impl Default for SysInfo {
+    /// Same as [SysInfo::new], so it also blocks for 200 ms to sample CPU usage.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

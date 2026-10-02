@@ -13,7 +13,7 @@ Always available:
 - **normalize_path**: Sanitize a path and resolve `.` / `..` without touching the filesystem
 - **num_cpus**: Number of available CPUs
 
-Behind cargo features (all enabled by default):
+Behind cargo features (all but `testtree` enabled by default):
 
 | Feature      | Contents                                                                  |
 |--------------|---------------------------------------------------------------------------|
@@ -21,6 +21,7 @@ Behind cargo features (all enabled by default):
 | `iptools`    | `miniutils::iptools`: IP/CIDR/range parsing, iteration and CIDR collapsing |
 | `sysinfo`    | `SysInfo` and `ProcessInfo` system/process stats, `sysinfo-printer` binary |
 | `tabulator`  | `simple_tabulate` / `tabulate_with_missing` text tables (ANSI and wide-char aware) |
+| `testtree`   | `TreeSpec`: synthetic directory trees for tests and benchmarks, listed without touching the disk (`plan`) or created in parallel (`create`) |
 
 ## Installation
 

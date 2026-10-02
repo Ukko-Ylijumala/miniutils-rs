@@ -12,6 +12,8 @@ mod procinfo;
 mod strtobytes;
 #[cfg(feature = "tabulator")]
 mod tabulator;
+#[cfg(feature = "testtree")]
+mod testtree;
 
 #[cfg(feature = "filesystem")]
 pub use filesystem::check_readable_dir;
@@ -28,6 +30,8 @@ use std::{
 pub use strtobytes::{str_to_bytes, str_to_bytes_64};
 #[cfg(feature = "tabulator")]
 pub use tabulator::{simple_tabulate, tabulate_with_missing};
+#[cfg(feature = "testtree")]
+pub use testtree::{Counts, CreateOpts, EntryKind, FileSize, NameFn, Plan, PlannedEntry, TreeSpec};
 
 static PLACEHOLDER: &str = "{}";
 static PH_BEG: char = '{';

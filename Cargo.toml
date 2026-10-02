@@ -25,6 +25,9 @@ iptools = ["dep:ipnet"]
 sysinfo = ["dep:sysinfo", "dep:parking_lot", "dep:serde", "dep:timesince"]
 # table formatting (pulls unicode-width)
 tabulator = ["dep:unicode-width"]
+# synthetic directory trees for tests and benchmarks: TreeSpec (std only;
+# not in default)
+testtree = []
 
 [dependencies]
 parking_lot = { version = "0.12.5", optional = true }
@@ -42,6 +45,9 @@ optional = true
 git = "https://github.com/Ukko-Ylijumala/timesince-rs"
 version = "0.3.4"
 optional = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "sysinfo-printer"

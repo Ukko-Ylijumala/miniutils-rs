@@ -43,7 +43,7 @@ default-features = false
 features = ["iptools"]
 ```
 
-Releases are tagged `vX.Y.Z`; use `tag = "v0.3.3"` instead of `version` to pin one exactly.
+Releases are tagged `vX.Y.Z`; use `tag = "v0.3.4"` instead of `version` to pin one exactly.
 
 Requires Rust 1.88 or newer.
 
@@ -70,6 +70,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Version History
 
+- 0.3.4: testtree special entries
+    - `Special` entries per level: symlinks (to a file, `..`, dangling, self), hardlinks, FIFOs and sockets; link targets listed in the plan
+    - entry names are `OsString`s (non-UTF-8 names possible); `EntryKind`, `PlannedEntry` and `Counts` are `#[non_exhaustive]`
 - 0.3.3: Synthetic directory trees
     - new `testtree` feature (not in default): `TreeSpec` describes a directory tree level by level, lists it without touching the disk (`plan`) and creates it in parallel (`create`)
 - 0.3.2: Performance

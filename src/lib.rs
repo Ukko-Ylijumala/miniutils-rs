@@ -31,7 +31,10 @@ pub use strtobytes::{str_to_bytes, str_to_bytes_64};
 #[cfg(feature = "tabulator")]
 pub use tabulator::{simple_tabulate, tabulate_with_missing};
 #[cfg(feature = "testtree")]
-pub use testtree::{Counts, CreateOpts, EntryKind, FileSize, NameFn, Plan, PlannedEntry, TreeSpec};
+pub use testtree::{
+    Counts, CreateOpts, EntryKind, FileSize, NameFn, Plan, PlannedEntry, Special, SpecialNameFn,
+    TreeSpec,
+};
 
 static PLACEHOLDER: &str = "{}";
 static PH_BEG: char = '{';

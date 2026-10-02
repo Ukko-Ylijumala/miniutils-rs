@@ -25,9 +25,9 @@ iptools = ["dep:ipnet"]
 sysinfo = ["dep:sysinfo", "dep:parking_lot", "dep:serde", "dep:timesince"]
 # table formatting (pulls unicode-width)
 tabulator = ["dep:unicode-width"]
-# synthetic directory trees for tests and benchmarks: TreeSpec (std only;
-# not in default)
-testtree = []
+# synthetic directory trees for tests and benchmarks: TreeSpec (pulls libc
+# for mkfifo; not in default)
+testtree = ["dep:libc"]
 
 [dependencies]
 parking_lot = { version = "0.12.5", optional = true }
@@ -35,6 +35,7 @@ sysinfo = { version = "0.37", optional = true, default-features = false, feature
 tracing = { version = "0.1.43", optional = true }
 unicode-width = { version = "0.2", optional = true, default-features = false }
 ipnet = { version = "2.11", optional = true }
+libc = { version = "0.2", optional = true }
 
 [dependencies.serde]
 version = "1.0.228"

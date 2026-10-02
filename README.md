@@ -21,7 +21,7 @@ Behind cargo features (all but `testtree` enabled by default):
 | `iptools`    | `miniutils::iptools`: IP/CIDR/range parsing, iteration and CIDR collapsing |
 | `sysinfo`    | `SysInfo` and `ProcessInfo` system/process stats, `sysinfo-printer` binary |
 | `tabulator`  | `simple_tabulate` / `tabulate_with_missing` text tables (ANSI and wide-char aware) |
-| `testtree`   | `TreeSpec`: synthetic directory trees for tests and benchmarks, listed without touching the disk (`plan`) or created in parallel (`create`) |
+| `testtree`   | `TreeSpec`: synthetic directory trees for tests and benchmarks - files, symlinks (to files, dirs, dangling, self), hardlinks, FIFOs and sockets, any (also non-UTF-8) names - listed without touching the disk (`plan`) or created in parallel (`create`) |
 
 ## Installation
 

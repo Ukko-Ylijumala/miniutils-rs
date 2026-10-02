@@ -227,7 +227,7 @@ impl SysInfo {
         let used = mem - avail;
         let cpu = i.cpu;
         let (l1, l5, l15) = i.load;
-        let ts = i.when.clone();
+        let ts = i.when; // Copy since timesince 0.3.3
         drop(i); // release the read lock before printing
         eprintln!(
             "{} | mem: {} used: {} avail: {} CPU: {:.2}% load: {:.2} {:.2} {:.2}",

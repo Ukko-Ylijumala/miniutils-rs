@@ -42,11 +42,10 @@ use std::{
 
 #[cfg(unix)]
 use std::{
-    ffi::CString,
-    os::unix::{ffi::OsStrExt, fs::symlink, net::UnixListener},
+    ffi::{CString, OsStr},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
+    os::unix::{ffi::OsStrExt, net::UnixListener},
 };
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
 
 /// Zeros written into files with a size, one chunk at a time.
 static ZEROS: [u8; ZERO_CHUNK] = [0; ZERO_CHUNK];
@@ -57,7 +56,11 @@ const UNITS_PER_THREAD: u64 = 4;
 const PROGRESS_BATCH: u64 = 256;
 /// What a [Special::SymlinkDangling] points to; no default name looks like it.
 const DANGLING_TARGET: &str = ".dangling-target";
-/// Permissions of a created FIFO (before the umask).
+/// Permissions of a created directory, file and FIFO (before the umask); the first two are std's.
+#[cfg(unix)]
+const DIR_MODE: libc::mode_t = 0o777;
+#[cfg(unix)]
+const FILE_MODE: libc::mode_t = 0o666;
 #[cfg(unix)]
 const FIFO_MODE: libc::mode_t = 0o644;
 /// Longest path a socket can be bound to: `sockaddr_un.sun_path` holds 108 bytes, NUL included.
@@ -234,7 +237,16 @@ struct CreateCtx<'a> {
     bytes: AtomicU64,
     specials: [AtomicU64; Special::COUNT],
     progress: Option<&'a (dyn Fn(u64) + Sync)>,
+    /// The directory the tree is created in.
+    root: &'a Path,
+    /// `root`, open: every entry is created relative to its parent's fd.
+    #[cfg(unix)]
+    root_fd: OwnedFd,
 }
+
+/// The open ancestors of the entry being created, below the root, outermost first.
+#[derive(Default)]
+struct OpenDirs(#[cfg(unix)] Vec<OwnedFd>);
 
 /* ######################################################################### */
 
@@ -314,6 +326,11 @@ impl TreeSpec {
     pub fn level(mut self, dirs: u64, files: u64) -> Self {
         self.levels.push(Level { dirs, files, ..Level::default() });
         self
+    }
+
+    /// [TreeSpec::level] `count` times: e.g. `levels(30, 1, 0)` for a chain of 30 directories.
+    pub fn levels(self, count: usize, dirs: u64, files: u64) -> Self {
+        (0..count).fold(self, |spec: TreeSpec, _| spec.level(dirs, files))
     }
 
     /**
@@ -440,7 +457,9 @@ impl TreeSpec {
     [Special] entries need a Unix platform.
 
     Each thread creates whole subtrees, so a subtree's directories are
-    always created before their contents.
+    always created before their contents. On Unix every entry is created
+    relative to its parent directory's fd (`mkdirat`, `openat`, ...), so
+    no path is resolved and a tree may reach deeper than `PATH_MAX`.
     */
     pub fn create_with<P: AsRef<Path>>(&self, root: P, opts: &CreateOpts) -> io::Result<Counts> {
         let root: &Path = root.as_ref();
@@ -463,6 +482,9 @@ impl TreeSpec {
             bytes: AtomicU64::new(0),
             specials: array::from_fn(|_| AtomicU64::new(0)),
             progress: opts.progress,
+            root,
+            #[cfg(unix)]
+            root_fd: File::open(root).map_err(|e| with_path(e, root))?.into(),
         };
 
         match self.split_depth(threads) {
@@ -708,11 +730,12 @@ impl CreateCtx<'_> {
     fn create(&self, plan: Plan) {
         let (mut dirs, mut files, mut bytes, mut unreported) = (0u64, 0u64, 0u64, 0u64);
         let mut specials: [u64; Special::COUNT] = [0; Special::COUNT];
+        let mut open: OpenDirs = OpenDirs::default();
         for entry in plan {
             if self.stop.load(Relaxed) {
                 break;
             }
-            if let Err(e) = create_entry(&entry) {
+            if let Err(e) = self.create_entry(&entry, &mut open) {
                 self.fail(with_path(e, &entry.path));
                 break;
             }
@@ -741,6 +764,37 @@ impl CreateCtx<'_> {
         }
     }
 
+    /**
+    Create one planned entry, relative to its parent directory's fd, so
+    that no path is resolved: a tree can be made deeper than `PATH_MAX`.
+    `open` holds the fds of the previous entry's ancestors; since a plan
+    lists parents before their contents, truncated to the depth of this
+    entry's parent they are this entry's ancestors, and only the missing
+    ones (the parent itself, or a subtree plan's top) are opened.
+    */
+    #[cfg(unix)]
+    fn create_entry(&self, entry: &PlannedEntry, open: &mut OpenDirs) -> io::Result<()> {
+        let rel: &Path = entry.path.strip_prefix(self.root).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "an entry outside the tree root")
+        })?;
+        let depth: usize = rel.components().count();
+        let (Some(name), true) = (rel.file_name(), depth > 0) else {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "an entry without a name"));
+        };
+        open.0.truncate(depth - 1);
+        while open.0.len() < depth - 1 {
+            let part: &OsStr = rel.iter().nth(open.0.len()).unwrap_or_default();
+            let fd: OwnedFd = open_dir_at(open.last_or(self.root_fd.as_fd()), part)?;
+            open.0.push(fd);
+        }
+        create_entry_at(open.last_or(self.root_fd.as_fd()), name, entry)
+    }
+
+    #[cfg(not(unix))]
+    fn create_entry(&self, entry: &PlannedEntry, _open: &mut OpenDirs) -> io::Result<()> {
+        create_entry(entry)
+    }
+
     fn report(&self, n: u64) {
         if let Some(progress) = self.progress {
             progress(n);
@@ -755,81 +809,129 @@ impl CreateCtx<'_> {
     }
 }
 
-/// Create one planned entry; never overwrites an existing one.
+#[cfg(unix)]
+impl OpenDirs {
+    /// The innermost open directory, or `root` if none is open.
+    fn last_or<'a>(&'a self, root: BorrowedFd<'a>) -> BorrowedFd<'a> {
+        self.0.last().map_or(root, |fd: &OwnedFd| fd.as_fd())
+    }
+}
+
+/// Write `size` zero bytes into `file`.
+fn write_zeros(mut file: File, size: u64) -> io::Result<()> {
+    let mut left: u64 = size;
+    while left > 0 {
+        let n: usize = left.min(ZERO_CHUNK as u64) as usize;
+        file.write_all(&ZEROS[..n])?;
+        left -= n as u64;
+    }
+    Ok(())
+}
+
+/// Create one planned entry by its path; never overwrites an existing one.
+#[cfg(not(unix))]
 fn create_entry(entry: &PlannedEntry) -> io::Result<()> {
     match entry.kind {
         EntryKind::Dir => fs::create_dir(&entry.path),
+        EntryKind::File => write_zeros(File::create_new(&entry.path)?, entry.size),
+        EntryKind::Special(kind) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{} entries need a Unix platform", kind.name()),
+        )),
+    }
+}
+
+/// Create the planned `entry`, named `name`, in the directory `dir`; never overwrites an existing one.
+#[cfg(unix)]
+fn create_entry_at(dir: BorrowedFd, name: &OsStr, entry: &PlannedEntry) -> io::Result<()> {
+    let c_name: CString = c_string(name)?;
+    match entry.kind {
+        // SAFETY (all libc calls here): the names are valid NUL-terminated strings, and `dir` an open fd
+        EntryKind::Dir => cvt(unsafe { libc::mkdirat(dir.as_raw_fd(), c_name.as_ptr(), DIR_MODE) }),
         EntryKind::File => {
-            let mut file: File = File::create_new(&entry.path)?;
-            let mut left: u64 = entry.size;
-            while left > 0 {
-                let n: usize = left.min(ZERO_CHUNK as u64) as usize;
-                file.write_all(&ZEROS[..n])?;
-                left -= n as u64;
-            }
-            Ok(())
+            let flags: libc::c_int = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC;
+            let fd: libc::c_int =
+                unsafe { libc::openat(dir.as_raw_fd(), c_name.as_ptr(), flags, FILE_MODE as libc::c_uint) };
+            cvt(fd)?;
+            // SAFETY: openat just returned this fd, and nothing else owns it
+            write_zeros(File::from(unsafe { OwnedFd::from_raw_fd(fd) }), entry.size)
         }
-        EntryKind::Special(kind) => create_special(kind, entry),
+        EntryKind::Special(kind) => {
+            let target = || -> io::Result<CString> {
+                let target: &Path = entry.target.as_deref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "a link without a target")
+                })?;
+                c_string(target.as_os_str())
+            };
+            match kind {
+                Special::Hardlink => {
+                    // planned as the file's full path; the file is in the same directory
+                    let file: &OsStr = entry.target.as_deref().and_then(Path::file_name).unwrap_or_default();
+                    let c_file: CString = c_string(file)?;
+                    cvt(unsafe {
+                        libc::linkat(dir.as_raw_fd(), c_file.as_ptr(), dir.as_raw_fd(), c_name.as_ptr(), 0)
+                    })
+                }
+                Special::Fifo => cvt(unsafe { libc::mkfifoat(dir.as_raw_fd(), c_name.as_ptr(), FIFO_MODE) }),
+                Special::Socket => bind_socket(dir, name, &entry.path),
+                // the symlink kinds
+                _ => cvt(unsafe { libc::symlinkat(target()?.as_ptr(), dir.as_raw_fd(), c_name.as_ptr()) }),
+            }
+        }
     }
 }
 
-/// Create a [Special] entry as planned.
+/// Open the directory `name` in `dir`, never through a symlink.
 #[cfg(unix)]
-fn create_special(kind: Special, entry: &PlannedEntry) -> io::Result<()> {
-    let target = || -> io::Result<&Path> {
-        entry.target.as_deref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "a link without a target")
-        })
-    };
-    match kind {
-        Special::Hardlink => fs::hard_link(target()?, &entry.path),
-        Special::Fifo => mkfifo(&entry.path),
-        Special::Socket => bind_socket(&entry.path),
-        _ => symlink(target()?, &entry.path), // the symlink kinds
-    }
-}
-
-#[cfg(not(unix))]
-fn create_special(kind: Special, _entry: &PlannedEntry) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        format!("{} entries need a Unix platform", kind.name()),
-    ))
-}
-
-#[cfg(unix)]
-fn mkfifo(path: &Path) -> io::Result<()> {
-    let c_path: CString = CString::new(path.as_os_str().as_bytes())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    // SAFETY: c_path is a valid NUL-terminated string that outlives the call
-    match unsafe { libc::mkfifo(c_path.as_ptr(), FIFO_MODE) } {
-        0 => Ok(()),
-        _ => Err(io::Error::last_os_error()),
-    }
+fn open_dir_at(dir: BorrowedFd, name: &OsStr) -> io::Result<OwnedFd> {
+    let c_name: CString = c_string(name)?;
+    let flags: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY: c_name is a valid NUL-terminated string, and `dir` an open fd
+    let fd: libc::c_int = unsafe { libc::openat(dir.as_raw_fd(), c_name.as_ptr(), flags) };
+    cvt(fd)?;
+    // SAFETY: openat just returned this fd, and nothing else owns it
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 /**
-Leave a socket file at `path`: bind a listener there and drop it. A path
-too long for `sockaddr_un` is bound through `/proc/self/fd/<dir fd>/name`
-on Linux, which resolves to the same directory.
+Leave a socket file named `name` in `dir` (at `path`): bind a listener
+there and drop it. A path too long for `sockaddr_un` is bound through
+`/proc/self/fd/<dir fd>/name` on Linux, which resolves to the same
+directory, however deep.
 */
 #[cfg(unix)]
-fn bind_socket(path: &Path) -> io::Result<()> {
+fn bind_socket(dir: BorrowedFd, name: &OsStr, path: &Path) -> io::Result<()> {
     if path.as_os_str().len() <= SUN_PATH_MAX {
         return UnixListener::bind(path).map(drop);
     }
     #[cfg(target_os = "linux")]
-    if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
-        let dir: File = File::open(dir)?;
+    {
         let short: PathBuf = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(name);
         if short.as_os_str().len() <= SUN_PATH_MAX {
             return UnixListener::bind(&short).map(drop);
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (dir, name);
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         "socket path too long for sockaddr_un",
     ))
+}
+
+/// `name` as a C string, for the libc calls.
+#[cfg(unix)]
+fn c_string(name: &OsStr) -> io::Result<CString> {
+    CString::new(name.as_bytes()).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+}
+
+/// A libc return value as a [io::Result]: `-1` is the error in `errno`.
+#[cfg(unix)]
+fn cvt(ret: libc::c_int) -> io::Result<()> {
+    match ret {
+        -1 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
+    }
 }
 
 /// `e` with the path it occurred on in its message.
@@ -1062,6 +1164,54 @@ mod tests {
         let socket: PathBuf = spec.plan(temp.path()).last().unwrap().path;
         assert!(socket.as_os_str().len() > SUN_PATH_MAX);
         assert!(fs::symlink_metadata(&socket).unwrap().file_type().is_socket());
+    }
+
+    /// The `lstat` of `rel` below `root`, reached through each parent's fd: works past `PATH_MAX`.
+    #[cfg(unix)]
+    fn lstat_beneath(root: &Path, rel: &Path) -> libc::stat {
+        let mut dir: OwnedFd = File::open(root).unwrap().into();
+        let mut parts: Vec<&OsStr> = rel.iter().collect();
+        let name: CString = c_string(parts.pop().unwrap()).unwrap();
+        for part in parts {
+            dir = open_dir_at(dir.as_fd(), part).unwrap();
+        }
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let ret = unsafe {
+            libc::fstatat(dir.as_raw_fd(), name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW)
+        };
+        assert_eq!(ret, 0, "{}: {}", rel.display(), io::Error::last_os_error());
+        st
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_past_path_max() {
+        // a chain of 30 directories with 200-byte names, every special kind at the bottom
+        let spec: TreeSpec = TreeSpec::new()
+            .levels(30, 1, 1)
+            .dir_names(|idx| format!("{}{:02}", "d".repeat(198), idx.len()));
+        let spec: TreeSpec = Special::ALL.into_iter().fold(spec, |s: TreeSpec, k: Special| s.with(k, 1));
+        for threads in [1, 4] {
+            let temp: TempDir = TempDir::new().unwrap();
+            let counts: Counts = spec
+                .create_with(temp.path(), &CreateOpts { threads, ..Default::default() })
+                .unwrap();
+            assert_eq!(counts, spec.counts(), "threads={threads}");
+            let mut deepest: usize = 0;
+            for entry in spec.plan(temp.path()) {
+                deepest = deepest.max(entry.path.as_os_str().len());
+                let st: libc::stat = lstat_beneath(temp.path(), entry.path.strip_prefix(temp.path()).unwrap());
+                let mode: libc::mode_t = match entry.kind {
+                    EntryKind::Dir => libc::S_IFDIR,
+                    EntryKind::File | EntryKind::Special(Special::Hardlink) => libc::S_IFREG,
+                    EntryKind::Special(Special::Fifo) => libc::S_IFIFO,
+                    EntryKind::Special(Special::Socket) => libc::S_IFSOCK,
+                    EntryKind::Special(_) => libc::S_IFLNK,
+                };
+                assert_eq!(st.st_mode & libc::S_IFMT, mode, "{}", entry.path.display());
+            }
+            assert!(deepest > libc::PATH_MAX as usize, "the tree must reach past PATH_MAX");
+        }
     }
 
     #[cfg(unix)]
